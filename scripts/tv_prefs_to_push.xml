@@ -1,0 +1,8 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <string name="tv_channel_name">PS3_93</string>
+    <string name="server_url">ws://192.168.1.2:3000</string>
+    <boolean name="kiosk_mode_enabled" value="true" />
+    <boolean name="keep_alive_enabled" value="true" />
+    <boolean name="auto_reconnect_enabled" value="true" />
+</map>

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!--
+      Base theme for the TV Receiver app.
+
+      Why this exists:
+        - AndroidManifest references @style/AppTheme (line above).
+        - We use Theme.AppCompat.NoActionBar as base so the app works on
+          Android TV boxes that don't expose the system action bar.
+        - Window background is forced to black to match TV idle state and
+          avoid the white flash on app launch.
+        - We don't use the framework's @android:style/Theme.Leanback because
+          it's not reliably resolvable through AAPT in AGP 8.x without
+          the full Leanback library wired up at the application level.
+
+      For an even more "TV-native" look later, swap the parent to:
+        @style/Theme.Leanback
+      (requires androidx.leanback:leanback preference-fragment dependency).
+    -->
+    <style name="AppTheme" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+
+</resources>

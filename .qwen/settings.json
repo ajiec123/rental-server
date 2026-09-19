@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm uninstall *)"
+    ]
+  },
+  "$version": 4,
+  "model": "qwen-bandelbanget",
+  "models": {
+    "qwen-bandelbanget": {
+      "provider": "openai",
+      "baseUrl": "https://bandelbanget.xyz/v1",
+      "apiKey": "sk-qwen-93c8d51b4fa35c2c316dcc05efbe92b9f0129c9b4a3a594c"
+    }
+  }
+}

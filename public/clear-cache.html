@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Clear Cache — Command Center</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b0f1a;
+        --panel: #131a2a;
+        --border: #1f2a3f;
+        --text: #e6ecf5;
+        --muted: #8a96b0;
+        --danger: #ef4444;
+        --ok: #10b981;
+        --accent: #6366f1;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 32px;
+        max-width: 560px;
+        width: 100%;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 24px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .badge {
+        background: var(--accent);
+        color: white;
+        padding: 2px 10px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+      }
+      p.lead { color: var(--muted); margin: 0 0 24px; line-height: 1.5; }
+      button {
+        width: 100%;
+        padding: 14px 18px;
+        border-radius: 10px;
+        border: none;
+        font-weight: 600;
+        font-size: 15px;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+      }
+      button.primary {
+        background: var(--danger);
+        color: white;
+      }
+      button.primary:hover { background: #dc2626; transform: translateY(-1px); }
+      button.primary:active { transform: translateY(0); }
+      button.ghost {
+        background: transparent;
+        color: var(--text);
+        border: 1px solid var(--border);
+        margin-top: 10px;
+      }
+      button.ghost:hover { background: rgba(255,255,255,0.04); }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+      .log {
+        margin-top: 24px;
+        background: #0a0e17;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 14px;
+        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        font-size: 12.5px;
+        max-height: 280px;
+        overflow-y: auto;
+        display: none;
+      }
+      .log.show { display: block; }
+      .log .row { padding: 3px 0; }
+      .log .ok { color: var(--ok); }
+      .log .del { color: var(--danger); }
+      .log .info { color: #94a3b8; }
+      .log .skip { color: #f59e0b; }
+
+      .summary {
+        margin-top: 18px;
+        padding: 14px 16px;
+        background: rgba(16, 185, 129, 0.08);
+        border: 1px solid rgba(16, 185, 129, 0.3);
+        border-radius: 8px;
+        display: none;
+      }
+      .summary.show { display: block; }
+      .summary b { color: var(--ok); }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>🧹 Clear Cache <span class="badge">CMD CENTER</span></h1>
+      <p class="lead">
+        Menghapus seluruh data <code>localStorage</code> bertanda <b>cmdcenter_</b> (stations, transactions, VIP, settings, dll.)
+        untuk sinkronisasi ulang dari server.
+      </p>
+
+      <button id="btnClear" class="primary">🗑 Hapus Semua Cache cmdcenter_*</button>
+      <button id="btnOpen" class="ghost">↗ Buka App Setelah Clear</button>
+
+      <div id="log" class="log"></div>
+      <div id="summary" class="summary"></div>
+    </div>
+
+    <script>
+      const $btnClear = document.getElementById('btnClear');
+      const $btnOpen = document.getElementById('btnOpen');
+      const $log = document.getElementById('log');
+      const $summary = document.getElementById('summary');
+
+      function append(text, cls) {
+        $log.classList.add('show');
+        const row = document.createElement('div');
+        row.className = 'row ' + (cls || '');
+        row.textContent = text;
+        $log.appendChild(row);
+        $log.scrollTop = $log.scrollHeight;
+      }
+
+      $btnClear.addEventListener('click', () => {
+        $btnClear.disabled = true;
+        $log.innerHTML = '';
+        $summary.classList.remove('show');
+
+        append('🔍 Scanning localStorage…', 'info');
+
+        let removed = 0;
+        let kept = 0;
+        const keptKeys = [];
+
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const key = localStorage.key(i);
+          if (!key) continue;
+
+          if (key.startsWith('cmdcenter_')) {
+            const val = localStorage.getItem(key);
+            const preview = (val || '').slice(0, 60);
+            localStorage.removeItem(key);
+            append('✖ removed: ' + key + '  →  ' + (preview.length === 60 ? preview + '…' : preview), 'del');
+            removed++;
+          } else {
+            keptKeys.push(key);
+            kept++;
+          }
+        }
+
+        // Also clear sessionStorage for any leftover WS-related flags
+        for (let i = sessionStorage.length - 1; i >= 0; i--) {
+          const key = sessionStorage.key(i);
+          if (key && key.startsWith('cmdcenter_')) {
+            sessionStorage.removeItem(key);
+            append('✖ sessionStorage removed: ' + key, 'del');
+          }
+        }
+
+        append('', 'info');
+        append('📊 Summary: removed=' + removed + ' cmdcenter_* keys, kept=' + kept + ' non-cmdcenter keys', 'info');
+
+        if (keptKeys.length) {
+          append('   (kept: ' + keptKeys.join(', ') + ')', 'skip');
+        }
+
+        $summary.innerHTML = '✅ <b>' + removed + '</b> cache entry berhasil dihapus. Klik "Buka App" di bawah untuk memuat ulang dari server.';
+        $summary.classList.add('show');
+        $btnOpen.focus();
+      });
+
+      $btnOpen.addEventListener('click', () => {
+        // Force a hard reload of the main app
+        window.location.href = '/?cachebust=' + Date.now();
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,2 @@
+adb -s 192.168.1.14:5555 logcat -d -v time TVReceiver:V '*:S' > 'd:\project web\command-center\scripts\tv_log_recent.txt'
+Get-Content 'd:\project web\command-center\scripts\tv_log_recent.txt' | Select-String -Pattern 'pairings|matchStation|renderTimerOverlay|TIMER' | Select-Object -First 30

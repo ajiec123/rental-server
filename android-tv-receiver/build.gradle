@@ -1,0 +1,26 @@
+// Top-level build.gradle for Android TV Receiver
+// Compile with: ./gradlew :app:assembleDebug
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        // AGP 8.7.3 — requires Gradle 8.9+, full JDK 21 support
+        classpath("com.android.tools.build:gradle:8.7.3")
+        // Kotlin 1.9.24 — stable, works with AGP 8.7.x
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.24")
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+
+    // NOTE: 'clean' task is automatically registered by AGP via LifecycleBasePlugin
+    // in Gradle 8.x. Do NOT add `tasks.register('clean', ...)` here — it causes
+    // DuplicateTaskException. Use `./gradlew clean` directly to clean build outputs.
+}

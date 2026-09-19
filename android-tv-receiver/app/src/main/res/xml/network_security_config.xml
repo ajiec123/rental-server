@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Network Security Config — allow cleartext for local LAN TV receiver.
+
+  Why:
+    - Android 9+ (API 28+) defaults to HTTPS-only network policy.
+    - Our app talks to local servers via ws:// on private IPs.
+    - domain-config domain entries use EXACT MATCH (not subnet ranges),
+      so we must list each known server IP.
+    - For this internal LAN app we just allow cleartext globally —
+      simpler and avoids the IP-list maintenance burden.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
+

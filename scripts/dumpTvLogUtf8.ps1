@@ -1,0 +1,2 @@
+adb -s 192.168.1.14:5555 logcat -d -v time TVReceiver:V '*:S' | Out-File -Encoding utf8 'd:\project web\command-center\scripts\tv_log_recent_utf8.txt'
+Get-Content 'd:\project web\command-center\scripts\tv_log_recent_utf8.txt' | Select-String -Pattern 'pairings|matchStation|renderTimerOverlay|warning|hiding overlay|init' | Select-Object -First 25

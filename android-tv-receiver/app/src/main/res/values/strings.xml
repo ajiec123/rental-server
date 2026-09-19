@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- App identity -->
+    <string name="app_name">Command Center TV Receiver</string>
+
+    <!-- Admin receiver labels -->
+    <string name="admin_receiver_label">Command Center TV Receiver (Kiosk)</string>
+    <string name="admin_receiver_description">Mengizinkan aplikasi ini dijalankan dalam mode kiosk (lock-task) untuk rental station gaming. Hanya Owner yang boleh mengaktifkan.</string>
+
+    <!-- Notification -->
+    <string name="notif_keepalive_title">📺 TV Receiver Aktif</string>
+    <string name="notif_keepalive_text">Menunggu perintah dari Command Center…</string>
+
+    <!-- Keep-alive channel -->
+    <string name="keepalive_channel_name">TV Receiver Background Service</string>
+    <string name="keepalive_channel_description">Menjaga koneksi TV receiver tetap hidup di latar belakang</string>
+</resources>

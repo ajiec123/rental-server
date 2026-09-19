@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Device admin policy for TV Receiver.
+
+  This file declares what the TV Receiver is allowed to do once it is
+  promoted to device-owner / device-admin via:
+    adb shell dpm set-device-owner com.cmdcenter.tvreceiver/.AdminReceiver
+
+  Policies enabled here are MINIMAL — only what's needed for kiosk mode:
+    - force-lock (optional, manual use only)
+    - wipe-data (escape hatch for Owner if TV gets stuck)
+    - disable-keyguard (so app can show without lock screen)
+
+  We do NOT request:
+    - reset-password (would lock Owner out if misused)
+    - encrypt-storage (not needed for rental)
+-->
+<device-admin>
+    <uses-policies>
+        <force-lock />
+        <wipe-data />
+        <disable-keyguard />
+    </uses-policies>
+</device-admin>

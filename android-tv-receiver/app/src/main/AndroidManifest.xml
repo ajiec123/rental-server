@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-feature
+        android:name="android.software.leanback"
+        android:required="true" />
+
+    <!-- Network -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <!-- Power / Screen -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.QUICKBOOT_POWERON" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <!-- Foreground overlay -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+    <application
+        android:label="@string/app_name"
+        android:theme="@style/AppTheme"
+        android:banner="@android:drawable/ic_menu_compass"
+        android:allowBackup="false"
+        android:networkSecurityConfig="@xml/network_security_config">
+
+        <!-- ====================================================== -->
+        <!-- MainActivity — TV Receiver                              -->
+        <!-- ====================================================== -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:screenOrientation="landscape"
+            android:launchMode="singleTask"
+            android:resizeableActivity="false"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:configChanges="orientation|keyboardHidden|screenSize|smallestScreenSize|screenLayout">
+
+            <!-- LAUNCHER: shows in app drawer / Android TV launcher row -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+
+            <!-- HOME: registers app as an alternative launcher.
+                 Set as default launcher with:
+                   adb shell cmd package set-home-activity \
+                     com.cmdcenter.tvreceiver/.MainActivity
+                 Once set, pressing the Home key on the remote always
+                 returns to this app — preventing customer from exiting
+                 to Android TV home screen. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- ====================================================== -->
+        <!-- SettingsActivity — TV settings UI                       -->
+        <!-- ====================================================== -->
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="true"
+            android:screenOrientation="landscape"
+            android:label="TV Settings"
+            android:configChanges="orientation|keyboardHidden|screenSize|smallestScreenSize|screenLayout">
+            <intent-filter>
+                <action android:name="com.cmdcenter.tvreceiver.OPEN_SETTINGS" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- ====================================================== -->
+        <!-- BrandingOverlayService — overlay nama rental di TV      -->
+        <!-- ====================================================== -->
+        <service
+            android:name=".BrandingOverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Branding overlay for gaming station rental" />
+        </service>
+
+        <!-- ====================================================== -->
+        <!-- ReceiverKeepAliveService — legacy, kept for backward    -->
+        <!-- compat. New logic lives in TvConnectionService.         -->
+        <!-- ====================================================== -->
+        <service
+            android:name=".ReceiverKeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keep WebSocket alive for TV command receiver" />
+        </service>
+
+        <!-- ====================================================== -->
+        <!-- TvConnectionService — owns WS + NSD + state machine.   -->
+        <!-- Sticky foreground so WS survives Activity death.       -->
+        <!-- ====================================================== -->
+        <service
+            android:name=".TvConnectionService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="TV command receiver — WebSocket + state machine" />
+        </service>
+
+        <!-- ====================================================== -->
+        <!-- TimeUpOverlayService — shows "WAKTU HABIS" overlay     -->
+        <!-- on top of HDMI via TYPE_APPLICATION_OVERLAY.            -->
+        <!-- ====================================================== -->
+        <service
+            android:name=".TimeUpOverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Show time-up overlay on top of HDMI" />
+        </service>
+
+        <!-- ====================================================== -->
+        <!-- BootReceiver — auto-launch MainActivity saat TV boot    -->
+        <!-- ====================================================== -->
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.RECEIVE_BOOT_COMPLETED">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <!-- For HTC devices -->
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <!-- ====================================================== -->
+        <!-- AdminReceiver — needed for kiosk / device-owner mode    -->
+        <!-- Set as device owner via:                                -->
+        <!--   adb shell dpm set-device-owner \                      -->
+        <!--     com.cmdcenter.tvreceiver/.AdminReceiver             -->
+        <!-- ====================================================== -->
+        <receiver
+            android:name=".AdminReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:label="@string/admin_receiver_label"
+            android:description="@string/admin_receiver_description">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin_policy" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
+
+    </application>
+</manifest>

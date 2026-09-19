@@ -1,0 +1,52 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.cmdcenter.tvreceiver'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.cmdcenter.tvreceiver"
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName "1.0.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+        debug {
+            // Allow cleartext HTTP for local network testing
+        }
+    }
+
+    compileOptions {
+        // Target JDK 21 — works with Gradle 8.7 + Android Studio's bundled JDK 25.
+        // Output bytecode is JDK 21-compatible; runtime on TV is fine since minSdk 21
+        // (Android ART bytecode interpretation is separate from JVM bytecode).
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
+    }
+    kotlinOptions { jvmTarget = '21' }
+}
+
+dependencies {
+    // AndroidX core library
+    implementation 'androidx.core:core-ktx:1.12.0'
+    // AndroidX appcompat (provides AppCompatActivity base class)
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    // Leanback library — provides Theme.Leanback, BrowseFragment, etc.
+    // Required because AndroidManifest.xml references @android:style/Theme.Leanback
+    // and <uses-feature android:name="android.software.leanback" />.
+    implementation 'androidx.leanback:leanback:1.0.0'
+    // OkHttp — used for WebSocket client in MainActivity
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    // JSON support (org.json.* is bundled, but explicit dep for clarity)
+    implementation 'org.json:json:20231013'
+    // Kotlin coroutines — needed for StateFlow / TV connection service
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+}
