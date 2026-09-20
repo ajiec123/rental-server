@@ -14,6 +14,7 @@ import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 
@@ -40,7 +41,7 @@ class SettingsActivity : Activity() {
         const val KEY_KIOSK_MODE = "kiosk_mode_enabled"
         const val KEY_KEEP_ALIVE = "keep_alive_enabled"
         const val DEFAULT_CHANNEL_NAME = ""  // Kosong = auto-derive dari device ID
-        const val DEFAULT_SERVER_URL = "ws://192.168.1.2:3000"
+        const val DEFAULT_SERVER_URL = "ws://192.168.1.8:3000"
 
         const val CHANNEL_PREFIX = "tv:"  // channel naming convention
 
@@ -314,7 +315,11 @@ class SettingsActivity : Activity() {
             if (!hasFocus) updateChannelPreview()
         }
 
-        setContentView(rootLayout)
+        val scrollView = ScrollView(this).apply {
+            isFillViewport = true
+            addView(rootLayout)
+        }
+        setContentView(scrollView)
 
         // Show current status
         updateStatusDisplay(savedChannel, savedServer)
@@ -399,11 +404,11 @@ class SettingsActivity : Activity() {
         val httpBase = when {
             serverUrl.startsWith("ws://") -> serverUrl.replace("ws://", "http://")
             serverUrl.startsWith("wss://") -> serverUrl.replace("wss://", "https://")
-            serverUrl.isEmpty() -> "http://192.168.1.2:3000" // fallback
+            serverUrl.isEmpty() -> "http://192.168.1.8:3000" // fallback
             else -> serverUrl
         }
-        // Strip trailing /ws or path
-        val cleanBase = httpBase.replace(Regex("/ws$|/.*$"), "")
+        // Strip only a trailing "/ws" or "/" path — keep the "//host:port" part.
+        val cleanBase = httpBase.removeSuffix("/ws").removeSuffix("/")
         val deviceId = try {
             val androidId = android.provider.Settings.Secure.getString(
                 contentResolver, android.provider.Settings.Secure.ANDROID_ID

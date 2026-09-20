@@ -17,6 +17,9 @@ export default defineConfig(() => {
       hmr: process.env.DISABLE_HMR !== 'true',
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      // Allow mDNS hostname access so the operator can open the app via
+      // http://rental-server.local:3000 instead of a raw IP.
+      allowedHosts: ['rental-server.local', '.local', 'localhost'],
     },
   };
 });

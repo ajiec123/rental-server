@@ -61,7 +61,7 @@ class MainActivity : Activity() {
         // FALLBACK: hardcoded URL if mDNS fails (5s timeout).
         // Override via SettingsActivity → set server_url there for different network.
         // Default assumes PC Owner at 192.168.1.2 (common Fiberhome router subnet).
-        private const val WS_SERVER_URL_FALLBACK = "ws://192.168.1.2:3000"
+        private const val WS_SERVER_URL_FALLBACK = "ws://192.168.1.8:3000"
         private const val WS_RECONNECT_DELAY_MS = 3000L
         private const val WS_RECONNECT_DELAY_MAX_MS = 30_000L
         private const val WS_PING_INTERVAL_MS = 25000L
@@ -343,9 +343,11 @@ class MainActivity : Activity() {
             val normalized = custom.trim().uppercase()
             CHANNEL_PREFIX + normalized
         } else {
-            // ===== NO FALLBACK =====
-            Log.w(TAG, "⚠️ No channel configured. Owner MUST open Settings → set channel name.")
-            "" // empty = invalid, Service will refuse to connect
+            // ===== TESTING FALLBACK =====
+            // Hardcoded channel for quick testing so the app works without
+            // going through Settings. Change this per-TV for production.
+            Log.w(TAG, "⚠️ No channel configured — using hardcoded test channel PS3_93")
+            CHANNEL_PREFIX + "PS3_93"
         }
     }
 

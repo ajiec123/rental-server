@@ -85,6 +85,7 @@ class TvConnectionService : Service() {
         // OR from SharedPreferences if MainActivity hasn't run yet (BootReceiver path)
         private const val PREFS_NAME = "tv_receiver"
         private const val KEY_CHANNEL_NAME = "tv_channel_name"
+        private const val KEY_SERVER_URL = "server_url"
 
         fun startWithChannel(context: Context, channel: String) {
             val intent = Intent(context, TvConnectionService::class.java).apply {
@@ -148,6 +149,7 @@ class TvConnectionService : Service() {
 
     private var webSocket: WebSocket? = null
     private var wsConnected = false
+    private var wsStarted = false
     @Volatile private var currentReconnectDelayMs = WS_RECONNECT_DELAY_MS
     private val wsHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
@@ -173,7 +175,7 @@ class TvConnectionService : Service() {
         androidId.takeLast(8).uppercase()
     }
 
-    @Volatile private var wsServerUrl: String = "ws://192.168.1.2:3000/ws"
+    @Volatile private var wsServerUrl: String = "ws://192.168.1.8:3000/ws"
     @Volatile private var tvChannel: String = "tv:UNKNOWN"
     private var nsdDiscovery: NsdDiscovery? = null
 
@@ -223,9 +225,19 @@ class TvConnectionService : Service() {
                     return START_NOT_STICKY
                 }
                 Log.i(TAG, "Starting WS connection for channel: $tvChannel")
+                // Guard against duplicate starts (MainActivity + re-delivered
+                // START_STICKY intents can call onStartCommand more than once,
+                // which used to open two WebSockets → server rejected the 2nd
+                // subscription as CHANNEL_TAKEN).
+                if (wsStarted) {
+                    Log.i(TAG, "WS already started — ignoring duplicate start")
+                    return START_STICKY
+                }
+                wsStarted = true
                 // ===== Pairing fix: register channel on server BEFORE WS subscribe =====
                 // This claims the channel for this specific device so two TVs
                 // can't accidentally share the same channel name.
+                resolveServerUrlFromPrefs()
                 serviceScope.launch { registerChannelWithServer(tvChannel) }
                 startNsdDiscovery()
                 connectWebSocket()
@@ -265,8 +277,8 @@ class TvConnectionService : Service() {
                     }
                 },
                 onServerLost = {
-                    Log.w(TAG, "mDNS: server lost. Falling back to default URL.")
-                    wsServerUrl = "ws://192.168.1.2:3000/ws"
+                    Log.w(TAG, "mDNS: server lost. Reverting to Settings URL.")
+                    resolveServerUrlFromPrefs()
                 }
             )
             nsdDiscovery?.startServerDiscovery()
@@ -639,12 +651,46 @@ class TvConnectionService : Service() {
             // Normalize: upper-case + trim so operator/server matching is consistent
             "$CHANNEL_PREFIX${custom.trim().uppercase()}"
         } else {
-            // ===== NO FALLBACK =====
-            // Returning empty string. Caller (onStartCommand) will refuse
-            // to start WS until channel is configured via Settings.
-            Log.w(TAG, "⚠️ No channel configured. WS will NOT start until channel is set.")
-            ""
+            // ===== TESTING FALLBACK =====
+            // Hardcoded channel for quick testing (same as MainActivity fallback).
+            Log.w(TAG, "⚠️ No channel configured — using hardcoded test channel PS3_93")
+            "$CHANNEL_PREFIX" + "PS3_93"
         }
+    }
+
+    /**
+     * Load the operator-configured WebSocket server URL from SharedPreferences
+     * (set in SettingsActivity). This is the primary fallback when mDNS
+     * auto-discovery hasn't found the server yet, and it fixes the previous
+     * bug where the service always connected to the hardcoded 192.168.1.2.
+     */
+    private fun resolveServerUrlFromPrefs() {
+        try {
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val saved = prefs.getString(KEY_SERVER_URL, null)
+            if (!saved.isNullOrBlank() &&
+                saved != "ws://auto-discovered" &&
+                (saved.startsWith("ws://") || saved.startsWith("wss://"))) {
+                val base = saved.trim().removeSuffix("/")
+                wsServerUrl = if (base.endsWith("/ws")) base else "$base/ws"
+                Log.i(TAG, "Server URL loaded from Settings: $wsServerUrl")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to read server URL from prefs: ${e.message}")
+        }
+    }
+
+    /** Resolve an HTTP base URL (for pairing REST calls) from mDNS or saved URL. */
+    private fun currentHttpBaseUrl(): String {
+        val discovered = nsdDiscovery?.getDiscoveredServerUrl()
+        val url = when {
+            !discovered.isNullOrBlank() -> discovered
+            else -> wsServerUrl
+        }
+        return url.replace("ws://", "http://")
+            .replace("wss://", "https://")
+            .removeSuffix("/ws")
+            .removeSuffix("/")
     }
 
     /**
@@ -655,9 +701,7 @@ class TvConnectionService : Service() {
      */
     private suspend fun registerChannelWithServer(channel: String) {
         try {
-            // Resolve HTTP server URL from mDNS or fallback
-            val serverUrl = nsdDiscovery?.getDiscoveredServerUrl() ?: "http://192.168.1.2:3000"
-            val httpUrl = serverUrl.replace("ws://", "http://").replace("wss://", "https://")
+            val httpUrl = currentHttpBaseUrl()
             val request = Request.Builder()
                 .url("$httpUrl/api/tv/pair")
                 .post(okhttp3.RequestBody.create(
@@ -685,8 +729,7 @@ class TvConnectionService : Service() {
      */
     private suspend fun releaseChannelWithServer(channel: String) {
         try {
-            val serverUrl = nsdDiscovery?.getDiscoveredServerUrl() ?: "http://192.168.1.2:3000"
-            val httpUrl = serverUrl.replace("ws://", "http://").replace("wss://", "https://")
+            val httpUrl = currentHttpBaseUrl()
             val request = Request.Builder()
                 .url("$httpUrl/api/tv/pair")
                 .delete(okhttp3.RequestBody.create(

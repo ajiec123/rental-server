@@ -61,8 +61,15 @@ export function startMdns(port: number, serverVersion: string): void {
   // === 1. Advertise this server ===
   try {
     bonjour.publish({
-      name: `CommandCenter-${process.platform}-${port}`,
+      name: 'rental-server',
       type: SERVER_SERVICE_TYPE,
+      // Fixed mDNS hostname so TVs connect to "rental-server.local" instead
+      // of a raw IP. Even if the operator PC changes IP, the hostname resolves
+      // to the new address automatically.
+      host: 'rental-server.local',
+      // Advertise IPv4 only — the WebSocket server binds 0.0.0.0 (IPv4).
+      // Without this, some resolvers return IPv6 AAAA records that don't route.
+      disableIPv6: true,
       port,
       txt: {
         version: serverVersion,

@@ -1,6 +1,10 @@
 package com.cmdcenter.tvreceiver
 
 import android.app.Service
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -58,6 +62,8 @@ class TimeUpOverlayService : Service() {
         private const val ACTION_SHOW = "com.cmdcenter.tvreceiver.SHOW_TIMEUP"
         private const val ACTION_DISMISS = "com.cmdcenter.tvreceiver.DISMISS_TIMEUP"
         private const val AUTO_DISMISS_AFTER_MS = 120_000L // 2 minutes
+        private const val NOTIFICATION_ID = 7779
+        private const val CHANNEL_ID = "timeup_overlay"
 
         fun show(context: Context, customerName: String, persist: Boolean = false) {
             val intent = Intent(context, TimeUpOverlayService::class.java).apply {
@@ -90,9 +96,13 @@ class TimeUpOverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        createNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // startForegroundService() requires startForeground() within 5s or
+        // Android kills the process with RemoteServiceException.
+        startForeground(NOTIFICATION_ID, buildNotification())
         when (intent?.action) {
             ACTION_DISMISS -> {
                 selfDismiss()
@@ -238,6 +248,41 @@ class TimeUpOverlayService : Service() {
         ringtone = null
         handler.removeCallbacks(autoDismissRunnable)
         stopSelf()
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (nm.getNotificationChannel(CHANNEL_ID) == null) {
+                nm.createNotificationChannel(
+                    NotificationChannel(CHANNEL_ID, "Time Up Overlay", NotificationManager.IMPORTANCE_LOW).apply {
+                        setShowBadge(false)
+                        enableLights(false)
+                        enableVibration(false)
+                    }
+                )
+            }
+        }
+    }
+
+    private fun buildNotification(): Notification {
+        val pi = PendingIntent.getActivity(
+            this, 0, Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION") Notification.Builder(this)
+        }
+        return builder
+            .setSmallIcon(android.R.drawable.ic_menu_compass)
+            .setContentTitle("Sesi Berakhir")
+            .setContentText("Waktu bermain habis")
+            .setContentIntent(pi)
+            .setOngoing(true)
+            .setPriority(Notification.PRIORITY_LOW)
+            .build()
     }
 
     override fun onDestroy() {
