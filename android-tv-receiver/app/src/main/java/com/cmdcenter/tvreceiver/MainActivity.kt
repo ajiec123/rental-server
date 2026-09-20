@@ -73,6 +73,7 @@ class MainActivity : Activity() {
         const val KEY_KIOSK_MODE = "kiosk_mode_enabled"
         const val KEY_KEEP_ALIVE = "keep_alive_enabled"
         const val KEY_AUTO_RECONNECT = "auto_reconnect_enabled"
+        const val KEY_STATION_NUMBER = "tv_station_number"
     }
 
     private lateinit var powerManager: PowerManager
@@ -338,17 +339,22 @@ class MainActivity : Activity() {
      */
     private fun resolveChannelName(): String {
         val prefs = getSharedPreferences("tv_receiver", Context.MODE_PRIVATE)
-        val custom = prefs.getString("tv_channel_name", null)
-        return if (!custom.isNullOrBlank()) {
-            val normalized = custom.trim().uppercase()
-            CHANNEL_PREFIX + normalized
-        } else {
-            // ===== TESTING FALLBACK =====
-            // Hardcoded channel for quick testing so the app works without
-            // going through Settings. Change this per-TV for production.
-            Log.w(TAG, "⚠️ No channel configured — using hardcoded test channel PS3_93")
-            CHANNEL_PREFIX + "PS3_93"
+        val num = prefs.getString(KEY_STATION_NUMBER, null)
+        return stationNumberToChannel(num)
+    }
+
+    /**
+     * Derive the channel from a station number. "1" or "01" → "tv:STATION_01",
+     * "10" → "tv:STATION_10". Returns "" if no valid number is set.
+     */
+    private fun stationNumberToChannel(num: String?): String {
+        val n = num?.trim()
+        if (n.isNullOrBlank() || !n.all { it.isDigit() }) {
+            Log.w(TAG, "⚠️ No station number configured — open Settings to set it")
+            return ""
         }
+        val padded = n.padStart(2, '0')
+        return CHANNEL_PREFIX + "STATION_" + padded
     }
 
     override fun onDestroy() {

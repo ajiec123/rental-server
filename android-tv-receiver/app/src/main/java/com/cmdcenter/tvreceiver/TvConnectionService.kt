@@ -12,6 +12,7 @@ import android.media.AudioManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 import android.view.WindowManager
 import kotlinx.coroutines.CoroutineScope
@@ -85,6 +86,7 @@ class TvConnectionService : Service() {
         // OR from SharedPreferences if MainActivity hasn't run yet (BootReceiver path)
         private const val PREFS_NAME = "tv_receiver"
         private const val KEY_CHANNEL_NAME = "tv_channel_name"
+        private const val KEY_STATION_NUMBER = "tv_station_number"
         private const val KEY_SERVER_URL = "server_url"
 
         fun startWithChannel(context: Context, channel: String) {
@@ -175,7 +177,7 @@ class TvConnectionService : Service() {
         androidId.takeLast(8).uppercase()
     }
 
-    @Volatile private var wsServerUrl: String = "ws://192.168.1.8:3000/ws"
+    @Volatile private var wsServerUrl: String = "ws://0.0.0.0:3000/ws"
     @Volatile private var tvChannel: String = "tv:UNKNOWN"
     private var nsdDiscovery: NsdDiscovery? = null
 
@@ -238,7 +240,7 @@ class TvConnectionService : Service() {
                 // This claims the channel for this specific device so two TVs
                 // can't accidentally share the same channel name.
                 resolveServerUrlFromPrefs()
-                serviceScope.launch { registerChannelWithServer(tvChannel) }
+                startUdpDiscovery()
                 startNsdDiscovery()
                 connectWebSocket()
             }
@@ -308,6 +310,11 @@ class TvConnectionService : Service() {
                 ws.send("""{"type":"IDENTIFY","clientType":"tv"}""")
                 ws.send("""{"type":"SUBSCRIBE","channels":["$tvChannel","tv:all"]}""")
                 startHeartbeat()
+
+                // Claim channel on server now that the URL is resolved (UDP/mDNS
+                // discovery may have finished after onStartCommand). This also
+                // records our IP on the server for ADB-based screen control.
+                serviceScope.launch { registerChannelWithServer(tvChannel) }
             }
 
             override fun onMessage(ws: WebSocket, text: String) {
@@ -446,6 +453,7 @@ class TvConnectionService : Service() {
                         remaining <= 0 -> {
                             if (current !is TvState.Ended) {
                                 _state.value = TvState.Ended(sessionId, customer)
+                                sleepScreen()
                                 showTimeUpOverlay(customer)
                             }
                         }
@@ -487,6 +495,7 @@ class TvConnectionService : Service() {
                 when {
                     remaining <= 0L && current !is TvState.Ended -> {
                         _state.value = TvState.Ended(sessionId, customer)
+                        sleepScreen()
                         showTimeUpOverlay(customer)
                     }
                     remaining in 1..SESSION_WARNING_THRESHOLD_MS && current !is TvState.Warning -> {
@@ -521,9 +530,6 @@ class TvConnectionService : Service() {
             "power_off" -> {
                 Log.i(TAG, "[ws] power_off received")
                 sleepScreen()
-                // Kiosk lock (fase2 COMMAND_LOCK_AND_SLEEP): tanpa device-owner,
-                // lockNow() tidak bisa — tampilkan overlay full-screen supaya
-                // customer tidak lanjut main setelah sesi diakhiri operator.
                 val current = _state.value
                 val sessionId = when (current) {
                     is TvState.Active -> current.sessionId
@@ -539,19 +545,41 @@ class TvConnectionService : Service() {
                 }
                 timerMonitorJob?.cancel()
                 _state.value = TvState.Ended(sessionId, customer)
+                // Fallback "lock screen" when device-owner sleep isn't available:
+                // a full-screen overlay locks the HDMI input so the customer
+                // can't keep playing after the session ends.
                 showTimeUpOverlay(customer, persist = true)
                 sendAck(channel = tvChannel, command = command, success = true)
             }
             "RECONNECT_TV" -> {
-                // WS-only reconnect, no hardware change
+                // Pure ping test — reply with ACK WITHOUT closing the WS.
+                // (Previously we closed the socket here, which caused a brief
+                // "offline" flicker in the operator UI every time "Connect"
+                // was pressed.)
+                Log.i(TAG, "[ws] RECONNECT_TV ping received — replying ACK")
                 sendAck(channel = tvChannel, command = command, success = true)
-                webSocket?.close(4001, "operator-triggered reconnect")
+            }
+            "volume_up" -> {
+                Log.i(TAG, "[ws] volume_up → adjustStreamVolume RAISE")
+                audioManager.adjustStreamVolume(
+                    AudioManager.STREAM_MUSIC,
+                    AudioManager.ADJUST_RAISE,
+                    AudioManager.FLAG_SHOW_UI
+                )
+                sendAck(channel = tvChannel, command = command, success = true)
+            }
+            "volume_down" -> {
+                Log.i(TAG, "[ws] volume_down → adjustStreamVolume LOWER")
+                audioManager.adjustStreamVolume(
+                    AudioManager.STREAM_MUSIC,
+                    AudioManager.ADJUST_LOWER,
+                    AudioManager.FLAG_SHOW_UI
+                )
+                sendAck(channel = tvChannel, command = command, success = true)
             }
             else -> {
-                // Volume / mute / branding — defer to Activity-side handler
-                // (those still work via activity_main overlay if visible)
-                Log.i(TAG, "[ws] command '$command' forwarded to MainActivity")
-                // Activity can still receive via receiver if registered
+                // Branding / other commands — no-op for now.
+                Log.i(TAG, "[ws] unhandled command '$command'")
             }
         }
     }
@@ -572,7 +600,20 @@ class TvConnectionService : Service() {
 
     // ===== Hardware helpers =====
     private fun wakeScreen() {
+        // 1. PowerManager.wakeUp() via reflection — same as adb KEYCODE_WAKEUP,
+        //    reliably turns the display back on (works on Android TV boxes).
         try {
+            val m = PowerManager::class.java.getMethod("wakeUp", Long::class.java)
+            m.invoke(powerManager, android.os.SystemClock.uptimeMillis())
+            Log.i(TAG, "[power_on] wakeUp() OK")
+            return
+        } catch (e: Exception) {
+            Log.w(TAG, "wakeUp() failed: ${e.message}")
+        }
+
+        // 2. Fallback: wake lock + brightness restore
+        try {
+            setScreenBrightness(128)
             val lock = powerManager.newWakeLock(
                 PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
                 "TVReceiver:wake"
@@ -585,21 +626,50 @@ class TvConnectionService : Service() {
     }
 
     private fun sleepScreen() {
+        // 1. PowerManager.goToSleep() via reflection — same as adb KEYCODE_SLEEP,
+        //    reliably turns the display OFF (backlight off). This is the only
+        //    approach that works without device-owner on most TV boxes.
+        try {
+            val m = PowerManager::class.java.getMethod("goToSleep", Long::class.java)
+            m.invoke(powerManager, android.os.SystemClock.uptimeMillis())
+            Log.i(TAG, "[power_off] goToSleep() OK")
+            return
+        } catch (e: Exception) {
+            Log.w(TAG, "goToSleep() failed: ${e.message}")
+        }
+
+        // 2. Device-owner lockNow (only if set as device owner)
         try {
             val adminComponent = android.content.ComponentName(this, AdminReceiver::class.java)
             val isDeviceOwner = try {
                 val m = devicePolicyManager.javaClass.getMethod("isDeviceOwner", android.content.ComponentName::class.java)
                 m.invoke(devicePolicyManager, adminComponent) as? Boolean ?: false
             } catch (_: Exception) { false }
-
             if (isDeviceOwner) {
                 devicePolicyManager.lockNow()
                 Log.i(TAG, "[power_off] lockNow() via device-owner")
-            } else {
-                Log.i(TAG, "[power_off] no device-owner — session ended, customer will see overlay")
+                return
             }
         } catch (e: Exception) {
-            Log.w(TAG, "sleepScreen error: ${e.message}")
+            Log.w(TAG, "lockNow() failed: ${e.message}")
+        }
+
+        // 3. Last resort: dim brightness
+        setScreenBrightness(0)
+        Log.i(TAG, "[power_off] screen dimmed to 0")
+    }
+
+    /** Set system screen brightness (0 = off/dark, 128 = normal). */
+    private fun setScreenBrightness(value: Int) {
+        try {
+            Settings.System.putInt(
+                contentResolver,
+                Settings.System.SCREEN_BRIGHTNESS_MODE,
+                Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL
+            )
+            Settings.System.putInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS, value)
+        } catch (e: Exception) {
+            Log.w(TAG, "setScreenBrightness($value) failed: ${e.message}")
         }
     }
 
@@ -646,16 +716,22 @@ class TvConnectionService : Service() {
 
     private fun resolveChannelFromPrefs(): String {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val custom = prefs.getString(KEY_CHANNEL_NAME, null)
-        return if (!custom.isNullOrBlank()) {
-            // Normalize: upper-case + trim so operator/server matching is consistent
-            "$CHANNEL_PREFIX${custom.trim().uppercase()}"
-        } else {
-            // ===== TESTING FALLBACK =====
-            // Hardcoded channel for quick testing (same as MainActivity fallback).
-            Log.w(TAG, "⚠️ No channel configured — using hardcoded test channel PS3_93")
-            "$CHANNEL_PREFIX" + "PS3_93"
+        val num = prefs.getString(KEY_STATION_NUMBER, null)
+        return stationNumberToChannel(num)
+    }
+
+    /**
+     * Derive the channel from a station number. "1" or "01" → "tv:STATION_01",
+     * "10" → "tv:STATION_10". Returns "" if no valid number is set.
+     */
+    private fun stationNumberToChannel(num: String?): String {
+        val n = num?.trim()
+        if (n.isNullOrBlank() || !n.all { it.isDigit() }) {
+            Log.w(TAG, "⚠️ No station number configured — open Settings to set it")
+            return ""
         }
+        val padded = n.padStart(2, '0')
+        return "$CHANNEL_PREFIX" + "STATION_" + padded
     }
 
     /**
@@ -691,6 +767,50 @@ class TvConnectionService : Service() {
             .replace("wss://", "https://")
             .removeSuffix("/ws")
             .removeSuffix("/")
+    }
+
+    /**
+     * Zero-setup discovery via UDP broadcast. Broadcasts "CC_DISCOVER" and
+     * waits for the server's "CC_SERVER:<port>" reply, then reconnects the
+     * WebSocket to the discovered address. Reliable even when mDNS multicast
+     * is filtered by the router.
+     */
+    private fun startUdpDiscovery() {
+        Thread {
+            try {
+                val socket = java.net.DatagramSocket()
+                socket.broadcast = true
+                socket.soTimeout = 3000
+                val msg = "CC_DISCOVER".toByteArray(Charsets.UTF_8)
+                val packet = java.net.DatagramPacket(
+                    msg, msg.size,
+                    java.net.InetAddress.getByName("255.255.255.255"), 3001
+                )
+                socket.send(packet)
+                val buf = ByteArray(256)
+                val recv = java.net.DatagramPacket(buf, buf.size)
+                socket.receive(recv)
+                val reply = String(recv.data, 0, recv.length, Charsets.UTF_8).trim()
+                if (reply.startsWith("CC_SERVER:")) {
+                    // Reply format: CC_SERVER:<ip>:<port> (IPv4, no colons in ip)
+                    val body = reply.removePrefix("CC_SERVER:")
+                    val parts = body.split(":")
+                    val discoveredIp = if (parts.size >= 2) parts[0] else recv.address?.hostAddress
+                    val port = parts.lastOrNull()?.toIntOrNull() ?: 3000
+                    if (!discoveredIp.isNullOrBlank()) {
+                        val newUrl = "ws://$discoveredIp:$port/ws"
+                        if (newUrl != wsServerUrl) {
+                            wsServerUrl = newUrl
+                            Log.i(TAG, "[udp-discovery] Server found: $newUrl")
+                            webSocket?.close(4002, "server URL discovered via UDP")
+                        }
+                    }
+                }
+                socket.close()
+            } catch (e: Exception) {
+                Log.w(TAG, "UDP discovery failed: ${e.message}")
+            }
+        }.start()
     }
 
     /**

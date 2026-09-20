@@ -61,7 +61,7 @@ class TimeUpOverlayService : Service() {
         private const val TAG = "TimeUpOverlay"
         private const val ACTION_SHOW = "com.cmdcenter.tvreceiver.SHOW_TIMEUP"
         private const val ACTION_DISMISS = "com.cmdcenter.tvreceiver.DISMISS_TIMEUP"
-        private const val AUTO_DISMISS_AFTER_MS = 120_000L // 2 minutes
+        private const val FADE_TO_BLACK_AFTER_MS = 60_000L // 1 minute
         private const val NOTIFICATION_ID = 7779
         private const val CHANNEL_ID = "timeup_overlay"
 
@@ -88,7 +88,7 @@ class TimeUpOverlayService : Service() {
     private var overlayView: View? = null
     private var windowManager: WindowManager? = null
     private val handler = Handler(Looper.getMainLooper())
-    private val autoDismissRunnable = Runnable { selfDismiss() }
+    private val fadeToBlackRunnable = Runnable { fadeToBlack() }
     private var ringtone: Ringtone? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -110,14 +110,13 @@ class TimeUpOverlayService : Service() {
             }
             else -> {
                 val customer = intent?.getStringExtra("customer") ?: "Customer"
-                // persist=true → overlay kiosk-lock (operator mengakhiri sesi):
-                // bertahan sampai power_on berikutnya / dismiss eksplisit.
-                // persist=false → overlay waktu habis biasa: auto-dismiss 2 menit.
                 val persist = intent?.getBooleanExtra("persist", false) ?: false
-                handler.removeCallbacks(autoDismissRunnable)
-                if (!persist) {
-                    handler.postDelayed(autoDismissRunnable, AUTO_DISMISS_AFTER_MS)
-                }
+                // persist=true → overlay kiosk-lock (operator mengakhiri sesi).
+                // persist=false → overlay waktu habis biasa.
+                // Keduanya: tampilkan "WAKTU HABIS" 1 menit, lalu fade ke layar
+                // hitam penuh (simulasi sleep/mati) sampai power_on berikutnya.
+                handler.removeCallbacks(fadeToBlackRunnable)
+                handler.postDelayed(fadeToBlackRunnable, FADE_TO_BLACK_AFTER_MS)
                 showOverlay(customer, persist)
                 playAlertTone()
             }
@@ -190,9 +189,9 @@ class TimeUpOverlayService : Service() {
 
         val hint = TextView(this).apply {
             text = if (persist) {
-                "Sesi telah diakhiri oleh operator • Layar terbuka otomatis saat sesi baru dimulai"
+                "Sesi telah diakhiri • Layar akan gelap otomatis"
             } else {
-                "Auto-close in 2 min • Tekan OK di remote untuk tes dismiss"
+                "Layar akan gelap otomatis dalam 1 menit"
             }
             gravity = Gravity.CENTER
             setTextColor(Color.parseColor("#888888"))
@@ -241,12 +240,26 @@ class TimeUpOverlayService : Service() {
         }
     }
 
+    private fun fadeToBlack() {
+        try {
+            overlayView?.let { root ->
+                root.setBackgroundColor(Color.BLACK)
+                if (root is FrameLayout) {
+                    root.removeAllViews()
+                }
+            }
+            Log.i(TAG, "Time-up overlay faded to full black (simulating sleep)")
+        } catch (e: Exception) {
+            Log.w(TAG, "fadeToBlack failed: ${e.message}")
+        }
+    }
+
     private fun selfDismiss() {
         overlayView?.let { try { windowManager?.removeView(it) } catch (_: Exception) {} }
         overlayView = null
         ringtone?.stop()
         ringtone = null
-        handler.removeCallbacks(autoDismissRunnable)
+        handler.removeCallbacks(fadeToBlackRunnable)
         stopSelf()
     }
 

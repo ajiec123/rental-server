@@ -1,6 +1,8 @@
 import express from 'express';
 import http from 'node:http';
 import path from 'node:path';
+import dgram from 'node:dgram';
+import os from 'node:os';
 import { WebSocketServer, WebSocket } from 'ws';
 import {
   loadAll,
@@ -682,7 +684,7 @@ async function startServer() {
   // This complements (does NOT replace) the existing stationId→tvChannel
   // pairing in tv_pairings table. The new flow is: TV picks channel →
   // tells server → operator maps it to station in UI.
-  let tvDeviceClaims = new Map<string, { deviceId: string; model: string; version: string; claimedAt: number }>();
+  let tvDeviceClaims = new Map<string, { deviceId: string; model: string; version: string; ip?: string; claimedAt: number }>();
 
   app.post('/api/tv/pair', (req, res) => {
     const { tvChannel, deviceId, model, version } = req.body || {};
@@ -715,10 +717,12 @@ async function startServer() {
     }
 
     // Claim or refresh
+    const remoteIp = (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
     tvDeviceClaims.set(fullChannel, {
       deviceId,
       model: model || 'unknown',
       version: version || '0.0.0',
+      ip: remoteIp || undefined,
       claimedAt: Date.now(),
     });
     console.log(`[tv-pair] ✅ ${fullChannel} claimed by deviceId=${deviceId} (${model || 'unknown'})`);
@@ -952,14 +956,14 @@ async function startServer() {
   // Resolve channel TV untuk sebuah station: pairing eksplisit (tv_pairings)
   // menang; kalau tidak ada, turunkan dengan konvensi yang SAMA persis dengan
   // frontend (src/utils/tvPairing.ts → buildDerivedStationChannel):
-  // "tv:<CONSOLETYPE tanpa spasi, uppercase, max 6 huruf>_<2 digit id station>".
-  function resolveStationTvChannelSrv(station: { id: string; consoleType: string }): string {
+  // "tv:STATION_<2 digit nomor station>" (nomor diambil dari nama station).
+  function resolveStationTvChannelSrv(station: { id: string; name?: string; consoleType: string }): string {
     const explicit = tvPairings.find((p) => p.stationId === station.id);
     if (explicit?.tvChannel) return explicit.tvChannel;
+    const nameMatch = (station.name || '').match(/(\d+)\s*$/);
     const idDigits = station.id.replace(/\D/g, '');
-    const lastTwo = idDigits.slice(-2).padStart(2, '0');
-    const consoleShort = station.consoleType.replace(/\s+/g, '').toUpperCase().slice(0, 6);
-    return `tv:${consoleShort}_${lastTwo}`;
+    const num = (nameMatch ? nameMatch[1] : idDigits.slice(-2)).padStart(2, '0');
+    return `tv:STATION_${num}`;
   }
 
   // Lampirkan channel TV terselesaikan ke setiap station untuk payload yang
@@ -1057,11 +1061,7 @@ async function startServer() {
       const pairingsForStation = tvPairings.filter((p) => p.stationId === st.id);
       const candidateChannels = pairingsForStation.length > 0
         ? pairingsForStation.map((p) => p.tvChannel)
-        : ['PS5', 'PS4', 'PS3', 'PS5PRO', 'SWITCH', 'XBOX', 'VIPSIM'].map((c) => {
-            const idDigits = st.id.replace(/\D/g, '');
-            const stSuffix = idDigits.slice(-2).padStart(2, '0');
-            return `tv:${c}_${stSuffix}`;
-          });
+        : [resolveStationTvChannelSrv(st)];
       let channelFound = false;
       for (const channel of candidateChannels) {
         const presence = tvPresence.get(channel);
@@ -1123,18 +1123,21 @@ async function startServer() {
     return tvPresence.get(channel) ?? null;
   }
 
-  // Heartbeat sweeper: every 5s, prune stale presence entries (no activity for >15s)
+  // Heartbeat sweeper: every 5s, prune stale presence entries (no activity for >60s)
   // and broadcast TV_PRESENCE_UPDATE to operators so the UI can show online/offline.
   const PRESENCE_STALE_MS = 15_000;
+  const PRESENCE_GRACE_MS = 60_000; // keep presence alive 60s after last heartbeat
   setInterval(() => {
     const now = Date.now();
-    let changed = false;
     for (const [ch, presence] of tvPresence.entries()) {
       const subs = channelRegistry.get(ch);
       const liveSubs = subs ? subs.size : 0;
       if (liveSubs === 0) {
-        tvPresence.delete(ch);
-        changed = true;
+        // Grace period: only delete after 60s of no heartbeat, so transient
+        // WS reconnects do not churn the operator UI.
+        if (now - presence.lastSeen > PRESENCE_GRACE_MS) {
+          tvPresence.delete(ch);
+        }
         continue;
       }
       if (now - presence.lastSeen > PRESENCE_STALE_MS) {
@@ -1143,12 +1146,11 @@ async function startServer() {
       // Always sync subscriber count
       if (presence.subscribers !== liveSubs) {
         presence.subscribers = liveSubs;
-        changed = true;
       }
     }
-    if (changed) {
-      broadcast({ type: 'TV_PRESENCE_UPDATE', presence: Object.fromEntries(tvPresence), timestamp: now });
-    }
+    // Always broadcast fresh lastSeen (heartbeat updates server-side presence
+    // without an immediate broadcast; the 5s sweep pushes it to operators).
+    broadcast({ type: 'TV_PRESENCE_UPDATE', presence: Object.fromEntries(tvPresence), timestamp: now });
   }, 5_000);
 
   function subscribeToChannel(client: ChannelClient, channel: string): void {
@@ -1194,7 +1196,13 @@ async function startServer() {
       if (subs.size === 0) channelRegistry.delete(channel);
     }
     client.subscribedChannels.delete(channel);
-    markChannelActive(channel);
+    // Update subscriber count WITHOUT refreshing lastSeen. A brief WS drop
+    // should not reset the "last heartbeat" age — otherwise the operator UI
+    // flips to offline on every transient reconnect.
+    const presence = tvPresence.get(channel);
+    if (presence) {
+      presence.subscribers = channelRegistry.get(channel)?.size ?? 0;
+    }
     broadcast({ type: 'TV_PRESENCE_UPDATE', presence: Object.fromEntries(tvPresence), timestamp: Date.now() });
   }
 
@@ -1899,6 +1907,35 @@ async function startServer() {
     console.log('[ws-channels] Channel registry ready. TVs subscribe via WS.');
     console.log('[ws-channels] Active channels: GET http://localhost:' + PORT + '/api/channels');
   });
+
+  // ===== UDP broadcast discovery (zero-setup fallback) =====
+  // mDNS service discovery is unreliable on Windows (bonjour-service publish
+  // often doesn't reach Android TV boxes). TVs broadcast "CC_DISCOVER" on the
+  // LAN; we reply with our IP:port. Works even when multicast is filtered by
+  // the router, so the TV never needs a manually-entered IP.
+  function getPrimaryIPv4(): string {
+    const ifaces = os.networkInterfaces();
+    for (const name of Object.keys(ifaces)) {
+      for (const iface of ifaces[name] || []) {
+        if (iface.family === 'IPv4' && !iface.internal && !iface.address.startsWith('169.254.')) {
+          return iface.address;
+        }
+      }
+    }
+    return '127.0.0.1';
+  }
+
+  const discoverySocket = dgram.createSocket('udp4');
+  discoverySocket.on('error', () => {});
+  discoverySocket.on('message', (msg, rinfo) => {
+    const text = msg.toString().trim();
+    if (text === 'CC_DISCOVER') {
+      const reply = Buffer.from(`CC_SERVER:${getPrimaryIPv4()}:${PORT}`);
+      discoverySocket.send(reply, rinfo.port, rinfo.address);
+      console.log(`[udp-discovery] replied to ${rinfo.address}:${rinfo.port} (${getPrimaryIPv4()}:${PORT})`);
+    }
+  });
+  discoverySocket.bind(3001, '0.0.0.0');
 
   // Mount channel-based TV adapter so the operator can publish to TV channels
   // without needing per-TV IP config. TVs connect via WebSocket on their own.

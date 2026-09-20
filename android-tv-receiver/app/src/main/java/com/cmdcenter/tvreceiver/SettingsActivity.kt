@@ -37,6 +37,7 @@ class SettingsActivity : Activity() {
     companion object {
         const val PREFS_NAME = "tv_receiver"
         const val KEY_CHANNEL_NAME = "tv_channel_name"
+        const val KEY_STATION_NUMBER = "tv_station_number"
         const val KEY_SERVER_URL = "server_url"
         const val KEY_KIOSK_MODE = "kiosk_mode_enabled"
         const val KEY_KEEP_ALIVE = "keep_alive_enabled"
@@ -46,10 +47,15 @@ class SettingsActivity : Activity() {
         const val CHANNEL_PREFIX = "tv:"  // channel naming convention
 
         private const val TAG = "TVSettings"
+
+        fun deriveChannelFromNumber(num: String?): String {
+            val n = num?.trim()
+            if (n.isNullOrBlank() || !n.all { it.isDigit() }) return ""
+            return "$CHANNEL_PREFIX" + "STATION_" + n.padStart(2, '0')
+        }
     }
 
     private lateinit var channelInput: EditText
-    private lateinit var serverInput: EditText
     private lateinit var statusText: TextView
     private lateinit var channelPreviewText: TextView
     private lateinit var kioskCheckbox: CheckBox
@@ -64,8 +70,7 @@ class SettingsActivity : Activity() {
         )
 
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val savedChannel = prefs.getString(KEY_CHANNEL_NAME, DEFAULT_CHANNEL_NAME) ?: DEFAULT_CHANNEL_NAME
-        val savedServer = prefs.getString(KEY_SERVER_URL, DEFAULT_SERVER_URL) ?: DEFAULT_SERVER_URL
+        val savedNumber = prefs.getString(KEY_STATION_NUMBER, DEFAULT_CHANNEL_NAME) ?: DEFAULT_CHANNEL_NAME
 
         val rootLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -84,9 +89,9 @@ class SettingsActivity : Activity() {
         }
         rootLayout.addView(title)
 
-        // ===== Channel name input =====
+        // ===== Station number input =====
         val channelLabel = TextView(this).apply {
-            text = "Channel Name (Identifier TV)"
+            text = "Nomor Station (1 - 99)"
             textSize = 14f
             setTextColor(0xFFFFFFFF.toInt())
             setPadding(0, 40, 0, 10)
@@ -94,9 +99,9 @@ class SettingsActivity : Activity() {
         rootLayout.addView(channelLabel)
 
         channelInput = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-            hint = "Contoh: PS5_01, PS3_93"
-            setText(savedChannel)
+            inputType = InputType.TYPE_CLASS_NUMBER
+            hint = "Contoh: 1, 10, 12"
+            setText(savedNumber)
             setTextColor(0xFF000000.toInt())
             setBackgroundColor(0xFFFFFFFF.toInt())
             setPadding(20, 20, 20, 20)
@@ -117,56 +122,15 @@ class SettingsActivity : Activity() {
         rootLayout.addView(channelPreviewText)
         updateChannelPreview()
 
-        // ===== Channel-naming convention hint =====
-        // Server tamper check uses regex `_(\d{2})$` — extracts the LAST 2
-        // DIGITS of the channel suffix and maps back to `st-<last2digits>`.
-        // So the suffix MUST be the last 2 digits of the station ID.
+        // ===== Station number hint =====
         val conventionHint = TextView(this).apply {
-            text = "💡 Format HARUS: tv:<consoleShort>_<2digit terakhir station ID>\n" +
-                    "   Contoh: station 'st-606393' → channel 'PS3_93' (suffix = 93)\n" +
-                    "   Jangan pakai 'PS3_01' (nomor urut) — server cuma cocok 2 digit terakhir ID."
+            text = "💡 Nomor ini menentukan channel TV: nomor 1 → tv:STATION_01, 10 → tv:STATION_10.\n" +
+                    "   Pastikan nomor sama dengan station di aplikasi operator."
             textSize = 10f
             setTextColor(0xFFFBBF24.toInt()) // amber — important notice
             setPadding(0, 4, 0, 0)
         }
         rootLayout.addView(conventionHint)
-
-        // ===== Server URL input =====
-        val serverLabel = TextView(this).apply {
-            text = "Server WebSocket URL"
-            textSize = 14f
-            setTextColor(0xFFFFFFFF.toInt())
-            setPadding(0, 30, 0, 10)
-        }
-        rootLayout.addView(serverLabel)
-
-        serverInput = EditText(this).apply {
-            // TYPE_TEXT_VARIATION_URI is the correct flag for URL inputs
-            // (TYPE_TEXT_FLAG_URI doesn't exist — that's a typo of TYPE_TEXT_VARIATION_URI).
-            inputType = InputType.TYPE_CLASS_TEXT or
-                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
-                InputType.TYPE_TEXT_VARIATION_URI
-            hint = "ws://192.168.1.5:3000"
-            setText(savedServer)
-            setTextColor(0xFF000000.toInt())
-            setBackgroundColor(0xFFFFFFFF.toInt())
-            setPadding(20, 20, 20, 20)
-            textSize = 16f
-            isSingleLine = true
-        }
-        val serverInputParams = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT
-        )
-        rootLayout.addView(serverInput, serverInputParams)
-
-        val serverHint = TextView(this).apply {
-            text = "💡 Format: ws://<server-ip>:3000 (lihat di server.ts console)"
-            textSize = 11f
-            setTextColor(0xFF94A3B8.toInt())
-            setPadding(0, 8, 0, 0)
-        }
-        rootLayout.addView(serverHint)
 
         // ===== Kiosk / Lock-task toggle =====
         val kioskLabel = TextView(this).apply {
@@ -322,36 +286,30 @@ class SettingsActivity : Activity() {
         setContentView(scrollView)
 
         // Show current status
-        updateStatusDisplay(savedChannel, savedServer)
+        updateStatusDisplay(savedNumber)
     }
 
     private fun updateChannelPreview() {
         val typed = channelInput.text.toString().trim()
         val preview = if (typed.isEmpty()) {
-            "(kosong → akan auto-derive dari device ID)"
+            "(kosong → belum ada nomor station)"
         } else {
-            "Channel aktif: ${CHANNEL_PREFIX}$typed"
+            "Channel aktif: ${deriveChannelFromNumber(typed)}"
         }
         channelPreviewText.text = preview
     }
 
     private fun saveSettings() {
-        val channelName = channelInput.text.toString().trim()
-        val serverUrl = serverInput.text.toString().trim()
+        val stationNumber = channelInput.text.toString().trim()
         val kioskEnabled = kioskCheckbox.isChecked
         val keepAliveEnabled = keepAliveCheckbox.isChecked
 
-        // Validate server URL — empty allowed (mDNS auto-discovery)
-        if (serverUrl.isNotEmpty() && !serverUrl.startsWith("ws://")) {
-            Toast.makeText(this, "❌ Server URL harus mulai dengan ws:// (atau kosongkan untuk auto-discovery)", Toast.LENGTH_LONG).show()
-            return
-        }
-
-        // Validate channel name (alphanumeric + dash + underscore)
-        if (channelName.isNotEmpty() && !channelName.matches(Regex("[A-Za-z0-9_\\-]+"))) {
+        // Validate station number (numeric, 1-99)
+        val numInt = stationNumber.toIntOrNull()
+        if (stationNumber.isNotEmpty() && (numInt == null || numInt < 1 || numInt > 99)) {
             Toast.makeText(
                 this,
-                "❌ Channel name hanya boleh huruf, angka, dash (-), underscore (_)",
+                "❌ Nomor station harus angka 1 sampai 99",
                 Toast.LENGTH_LONG
             ).show()
             return
@@ -359,13 +317,12 @@ class SettingsActivity : Activity() {
 
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit()
-            .putString(KEY_CHANNEL_NAME, channelName)
-            .putString(KEY_SERVER_URL, serverUrl.ifEmpty { "ws://auto-discovered" })
+            .putString(KEY_STATION_NUMBER, stationNumber)
             .putBoolean(KEY_KIOSK_MODE, kioskEnabled)
             .putBoolean(KEY_KEEP_ALIVE, keepAliveEnabled)
             .apply()
 
-        Log.i(TAG, "Settings saved: channel=$channelName, server=$serverUrl, kiosk=$kioskEnabled, keepAlive=$keepAliveEnabled")
+        Log.i(TAG, "Settings saved: stationNumber=$stationNumber, kiosk=$kioskEnabled, keepAlive=$keepAliveEnabled")
 
         // Restart keep-alive service based on new setting
         if (keepAliveEnabled) {
@@ -385,7 +342,6 @@ class SettingsActivity : Activity() {
 
     private fun resetToDefaults() {
         channelInput.setText(DEFAULT_CHANNEL_NAME)
-        serverInput.setText(DEFAULT_SERVER_URL)
         updateChannelPreview()
         Toast.makeText(this, "🔄 Reset ke default", Toast.LENGTH_SHORT).show()
     }
@@ -395,16 +351,18 @@ class SettingsActivity : Activity() {
      * Shows result in [statusText] and as toast.
      */
     private fun testPairing() {
-        val channelName = channelInput.text.toString().trim()
+        val stationNumber = channelInput.text.toString().trim()
+        val channelName = deriveChannelFromNumber(stationNumber)
         if (channelName.isEmpty()) {
-            Toast.makeText(this, "❌ Isi channel name dulu", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "❌ Isi nomor station dulu", Toast.LENGTH_SHORT).show()
             return
         }
-        val serverUrl = serverInput.text.toString().trim()
+        // Server URL no longer manually configurable — server is auto-discovered
+        // via UDP/mDNS. Use the default fallback for the pairing test.
+        val serverUrl = DEFAULT_SERVER_URL
         val httpBase = when {
             serverUrl.startsWith("ws://") -> serverUrl.replace("ws://", "http://")
             serverUrl.startsWith("wss://") -> serverUrl.replace("wss://", "https://")
-            serverUrl.isEmpty() -> "http://192.168.1.8:3000" // fallback
             else -> serverUrl
         }
         // Strip only a trailing "/ws" or "/" path — keep the "//host:port" part.
@@ -459,28 +417,18 @@ class SettingsActivity : Activity() {
         }.start()
     }
 
-    private fun updateStatusDisplay(channel: String, serverUrl: String) {
-        val resolvedChannel = if (channel.isEmpty()) {
-            "(auto-derive dari device ID)"
-        } else {
-            "${CHANNEL_PREFIX}$channel"
-        }
-        // Use fallback indicator if user hasn't set a manual URL yet
-        val isFallback = serverUrl.startsWith("ws://192.168.1.5") || serverUrl.isEmpty()
-        val serverDisplay = if (isFallback) {
-            "$serverUrl\n   💡 (kosongkan jika ingin pakai auto-discovery mDNS)"
-        } else {
-            serverUrl
+    private fun updateStatusDisplay(stationNumber: String) {
+        val resolvedChannel = deriveChannelFromNumber(stationNumber).ifEmpty {
+            "(belum ada nomor station)"
         }
         val status = """
             📺 Channel: $resolvedChannel
-            🪄 Auto-Discovery: AKTIF (mDNS)
-            🌐 Server (fallback): $serverDisplay
+            🪄 Auto-Discovery: AKTIF (UDP + mDNS)
 
             💡 Tips:
                • WiFi harus sama dengan komputer Owner
                • Tidak perlu setting IP — server auto-terdeteksi
-               • Hanya perlu set Channel Name (opsional)
+               • Hanya perlu set Nomor Station (1-99)
         """.trimIndent()
         statusText.text = status
     }

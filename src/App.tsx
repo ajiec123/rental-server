@@ -815,8 +815,8 @@ export default function App() {
             [targetStation.id]: { status: 'ack_received', startedAt: prev[targetStation.id]?.startedAt ?? Date.now() },
           }));
           triggerActionToast(
-            `🔄 TV ${targetStation.name} merespons! Reconnect dimulai...`,
-            'info'
+            `✅ TV ${targetStation.name} terhubung & merespons!`,
+            'success'
           );
         }
       }
@@ -948,7 +948,7 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
       .filter((presence): presence is NonNullable<typeof presence> => Boolean(presence));
 
     if (presenceEntries.length === 0) {
-      return { online: true, subscribers: 0, lastSeen: null, latencyMs: null, status: 'unknown' };
+      return { online: false, subscribers: 0, lastSeen: null, latencyMs: null, status: 'unknown' };
     }
 
     const bestPresence = presenceEntries.reduce((best, current) => {
@@ -960,18 +960,37 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
 
     const ageMs = bestPresence.lastSeen ? Date.now() - bestPresence.lastSeen : null;
     let status: 'online' | 'idle' | 'offline' | 'unknown' = 'unknown';
-    if (bestPresence.subscribers === 0) status = 'offline';
-    else if (ageMs === null || ageMs > 15_000) status = 'offline';
-    else if (ageMs > 5_000) status = 'idle';
+    // Base status on HEARTBEAT AGE (not subscriber count). The server keeps
+    // lastSeen at the last heartbeat even during a transient WS drop, so a
+    // brief reconnect does not flip the UI. Heartbeat ≈ 5s.
+    if (ageMs === null || ageMs > 60_000) status = 'offline';
+    else if (ageMs > 15_000) status = 'idle';
     else status = 'online';
     return {
-      online: status !== 'offline',
+      online: status === 'online' || status === 'idle',
       subscribers: bestPresence.subscribers,
       lastSeen: bestPresence.lastSeen,
       latencyMs: ageMs,
       status,
     };
   }, [tvPresenceMap]);
+
+  // Notify operator when a station's TV transitions to offline.
+  const prevTvStatusRef = useRef<Record<string, string>>({});
+  useEffect(() => {
+    for (const st of stations) {
+      const s = checkTvOnline(st);
+      const prev = prevTvStatusRef.current[st.id];
+      if (s.status === 'offline' && prev && prev !== 'offline') {
+        triggerActionToast(
+          `⚠ ${st.name}: TV tidak terhubung. Silakan periksa receiver / klik Connect.`,
+          'warning'
+        );
+      }
+      prevTvStatusRef.current[st.id] = s.status;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tvPresenceMap, stations]);
 
   /**
    * Test reconnect (WS-only, anti-fraud):
@@ -2210,10 +2229,6 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
         isOpen={!!tvStationForControl}
         onClose={() => setTvStationForControl(null)}
         onSendCommand={handleTvControl}
-        onSendBranding={handleSendBranding}
-        onBroadcastBrandingAll={handleBroadcastBrandingAll}
-        brandingConfig={brandingConfig}
-        allStations={stations}
         pairings={tvPairings}
         tvClaims={tvClaims}
         onSavePairing={(pairing) => {

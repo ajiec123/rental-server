@@ -6,15 +6,18 @@ export interface StationTvPairing {
   createdAt?: number;
 }
 
-export function buildDerivedStationChannel(station: { id: string; consoleType: string }): string {
+export function buildDerivedStationChannel(station: { id: string; name?: string; consoleType: string }): string {
+  // Zero-setup convention: channel = tv:STATION_<2-digit station number>.
+  // Number is taken from the trailing digits of the station name
+  // (e.g. "Station 04" → 04), falling back to the station id digits.
+  const nameMatch = (station.name || '').match(/(\d+)\s*$/);
   const idDigits = station.id.replace(/\D/g, '');
-  const lastTwo = idDigits.slice(-2).padStart(2, '0');
-  const consoleShort = station.consoleType.replace(/\s+/g, '').toUpperCase().slice(0, 6);
-  return `tv:${consoleShort}_${lastTwo}`;
+  const num = (nameMatch ? nameMatch[1] : idDigits.slice(-2)).padStart(2, '0');
+  return `tv:STATION_${num}`;
 }
 
 export function resolveStationTvChannel(
-  station: { id: string; consoleType: string },
+  station: { id: string; name?: string; consoleType: string },
   pairings: StationTvPairing[] = []
 ): string {
   const explicit = pairings.find((p) => p.stationId === station.id);
@@ -22,7 +25,7 @@ export function resolveStationTvChannel(
 }
 
 export function getTvChannelCandidates(
-  station: { id: string; consoleType: string },
+  station: { id: string; name?: string; consoleType: string },
   pairings: StationTvPairing[] = [],
   presenceChannels: string[] = []
 ): string[] {
@@ -31,7 +34,10 @@ export function getTvChannelCandidates(
   const [baseConsole = '', baseSuffix = ''] = base.split('_');
   const baseConsoleShort = baseConsole.replace(/^TV:/, '');
   const suffixRegex = new RegExp(`^TV:${baseConsoleShort}_${baseSuffix}$`);
-  const candidates = new Set<string>([primary, 'tv:all']);
+  // NOTE: "tv:all" is a BROADCAST channel (every TV subscribes to it), so it
+  // must NOT be a status candidate — otherwise one TV's presence pollutes the
+  // status of every station (e.g. "Connect" on one station flickers all).
+  const candidates = new Set<string>([primary]);
 
   presenceChannels.forEach((channel) => {
     if (!channel.startsWith('tv:')) return;

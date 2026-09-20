@@ -1,84 +1,40 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Zero-setup TV Receiver: this activity is intentionally blank. The real work
+  happens in TvConnectionService (WebSocket + NSD + UDP discovery) and the
+  overlay services. Views are kept (visibility=gone) only so R.id references
+  in MainActivity still resolve. Settings is reachable via:
+      adb shell am start -n com.cmdcenter.tvreceiver/.SettingsActivity
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#000000"
     android:gravity="center"
-    android:orientation="vertical"
-    android:padding="40dp">
+    android:orientation="vertical">
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="📺 Command Center TV Receiver"
-        android:textColor="#00E5FF"
-        android:textSize="28sp"
-        android:textStyle="bold" />
-
-    <!-- Channel & Status Display -->
     <TextView
         android:id="@+id/tv_channel_label"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="30dp"
-        android:text="Channel: (loading...)"
-        android:textColor="#FFD93D"
-        android:textSize="16sp"
-        android:textStyle="bold"
-        android:fontFamily="monospace" />
+        android:visibility="gone" />
 
     <TextView
         android:id="@+id/tv_ws_status"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:text="Status: ⏳ Connecting..."
-        android:textColor="#94A3B8"
-        android:textSize="13sp"
-        android:fontFamily="monospace" />
+        android:visibility="gone" />
 
     <TextView
         android:id="@+id/tv_mdns_status"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:text="🪄 Auto-Discovery (mDNS): searching..."
-        android:textColor="#A66CFF"
-        android:textSize="11sp"
-        android:fontFamily="monospace" />
+        android:visibility="gone" />
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="30dp"
-        android:text="Listening on HTTP port 8765 + WebSocket"
-        android:textColor="#FFFFFF"
-        android:textSize="14sp" />
-
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:text="Ready to receive power / volume / branding commands"
-        android:textColor="#94A3B8"
-        android:textSize="11sp" />
-
-    <!-- Open Settings Button -->
     <Button
         android:id="@+id/btn_open_settings"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="40dp"
-        android:text="⚙️ Settings (Ubah Channel Name)"
-        android:textColor="#000000"
-        android:textSize="14sp"
-        android:textStyle="bold"
-        android:background="#00E5FF"
-        android:paddingLeft="40dp"
-        android:paddingRight="40dp"
-        android:paddingTop="20dp"
-        android:paddingBottom="20dp"
-        android:focusable="true"
-        android:focusableInTouchMode="true" />
+        android:visibility="gone" />
 
 </LinearLayout>
