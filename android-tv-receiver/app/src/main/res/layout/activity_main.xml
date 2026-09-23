@@ -1,40 +1,100 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Zero-setup TV Receiver: this activity is intentionally blank. The real work
-  happens in TvConnectionService (WebSocket + NSD + UDP discovery) and the
-  overlay services. Views are kept (visibility=gone) only so R.id references
-  in MainActivity still resolve. Settings is reachable via:
-      adb shell am start -n com.cmdcenter.tvreceiver/.SettingsActivity
+  TV Receiver main screen: minimal — mostly black, just the ⚙ button for the
+  station-number editor. The "screen off" state is a full-black overlay
+  (TimeUpOverlayService) shown over HDMI/app when the session ends.
 -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000"
-    android:gravity="center"
-    android:orientation="vertical">
+    android:background="#000000">
 
     <TextView
-        android:id="@+id/tv_channel_label"
+        android:id="@+id/tv_status"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:visibility="gone" />
-
-    <TextView
-        android:id="@+id/tv_ws_status"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:visibility="gone" />
-
-    <TextView
-        android:id="@+id/tv_mdns_status"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:visibility="gone" />
+        android:layout_gravity="center"
+        android:gravity="center"
+        android:padding="20dp"
+        android:textColor="#334155"
+        android:textSize="12sp" />
 
     <Button
-        android:id="@+id/btn_open_settings"
+        android:id="@+id/btn_edit"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:visibility="gone" />
+        android:layout_gravity="top|end"
+        android:background="#1E293B"
+        android:clickable="true"
+        android:focusable="true"
+        android:padding="16dp"
+        android:text="⚙"
+        android:textColor="#64748B"
+        android:textSize="24sp" />
 
-</LinearLayout>
+    <LinearLayout
+        android:id="@+id/edit_panel"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#DD0F172A"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="60dp"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Nomor Station (1 - 99)"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp" />
+
+        <EditText
+            android:id="@+id/et_station_number"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="#FFFFFF"
+            android:hint="Contoh: 1, 7, 10"
+            android:inputType="number"
+            android:maxLength="2"
+            android:padding="20dp"
+            android:singleLine="true"
+            android:textColor="#000000"
+            android:textSize="18sp" />
+
+        <TextView
+            android:id="@+id/tv_channel_preview"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingTop="8dp"
+            android:textColor="#94A3B8"
+            android:textSize="12sp" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:orientation="horizontal"
+            android:paddingTop="20dp">
+
+            <Button
+                android:id="@+id/btn_save"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="#14B8A6"
+                android:text="💾 Simpan"
+                android:textColor="#FFFFFF" />
+
+            <Button
+                android:id="@+id/btn_cancel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:background="#475569"
+                android:text="Batal"
+                android:textColor="#FFFFFF" />
+        </LinearLayout>
+    </LinearLayout>
+
+</FrameLayout>

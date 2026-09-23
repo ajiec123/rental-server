@@ -3,6 +3,7 @@ import http from 'node:http';
 import path from 'node:path';
 import dgram from 'node:dgram';
 import os from 'node:os';
+import fs from 'node:fs/promises';
 import { WebSocketServer, WebSocket } from 'ws';
 import {
   loadAll,
@@ -268,7 +269,7 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json());
+  app.use(express.json({ limit: '15mb' }));
 
   // REST API: full state snapshot (includes everything: stations, tx, vips, employees, settings)
   app.get('/api/state', (req, res) => {
@@ -924,6 +925,71 @@ async function startServer() {
       dataDir: DATA_DIR_PATH,
       time: new Date().toISOString(),
     });
+  });
+
+  // ===== Branding (screensaver wallpaper + pricelist) =====
+  // Stored in data-server/branding.json. TVs fetch /api/branding and
+  // /api/branding/wallpaper to render the idle screensaver.
+  const BRANDING_FILE = path.join(DATA_DIR_PATH, 'branding.json');
+
+  interface BrandingConfig {
+    pricelist: string;
+    wallpaper: string | null; // base64 data URL
+    rentalName: string; // rental display name shown on TV screensaver
+  }
+
+  async function loadBranding(): Promise<BrandingConfig> {
+    try {
+      const raw = await fs.readFile(BRANDING_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      return {
+        pricelist: typeof parsed.pricelist === 'string' ? parsed.pricelist : '',
+        wallpaper: typeof parsed.wallpaper === 'string' ? parsed.wallpaper : null,
+        rentalName: typeof parsed.rentalName === 'string' ? parsed.rentalName : '',
+      };
+    } catch {
+      return { pricelist: '', wallpaper: null, rentalName: '' };
+    }
+  }
+
+  async function saveBranding(cfg: BrandingConfig): Promise<void> {
+    await fs.mkdir(DATA_DIR_PATH, { recursive: true });
+    await fs.writeFile(BRANDING_FILE, JSON.stringify(cfg, null, 2), 'utf-8');
+  }
+
+  app.get('/api/branding', async (_req, res) => {
+    const cfg = await loadBranding();
+    res.json({ pricelist: cfg.pricelist, hasWallpaper: !!cfg.wallpaper, rentalName: cfg.rentalName });
+  });
+
+  app.get('/api/branding/wallpaper', async (_req, res) => {
+    const cfg = await loadBranding();
+    if (!cfg.wallpaper) return res.status(404).end();
+    const match = cfg.wallpaper.match(/^data:([^;]+);base64,(.*)$/s);
+    if (!match) return res.status(400).end();
+    const mime = match[1];
+    const buf = Buffer.from(match[2], 'base64');
+    res.setHeader('Content-Type', mime);
+    res.send(buf);
+  });
+
+  app.post('/api/branding', async (req, res) => {
+    const body = req.body || {};
+    const cfg = await loadBranding();
+    if (typeof body.pricelist === 'string') cfg.pricelist = body.pricelist;
+    if (typeof body.rentalName === 'string') cfg.rentalName = body.rentalName;
+    if (typeof body.wallpaper === 'string' && body.wallpaper.startsWith('data:')) {
+      cfg.wallpaper = body.wallpaper;
+    }
+    await saveBranding(cfg);
+    broadcastToChannelType('tv', {
+      type: 'BRANDING_UPDATE',
+      pricelist: cfg.pricelist,
+      rentalName: cfg.rentalName,
+      hasWallpaper: !!cfg.wallpaper,
+      timestamp: Date.now(),
+    });
+    res.json({ ok: true, pricelist: cfg.pricelist, rentalName: cfg.rentalName, hasWallpaper: !!cfg.wallpaper });
   });
 
   // Cache cleaner page — clears all cmdcenter_* localStorage keys then redirects to app.

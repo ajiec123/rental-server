@@ -730,6 +730,12 @@ export default function App() {
 
   useEffect(() => {
     localStorage.setItem('cmdcenter_tv_branding', JSON.stringify(brandingConfig));
+    // Also persist the rental name to the server so the TV screensaver can show it.
+    fetch('/api/branding', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rentalName: brandingConfig.text }),
+    }).catch(() => {});
   }, [brandingConfig]);
 
   // ===== WebSocket live connection =====

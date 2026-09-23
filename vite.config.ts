@@ -16,7 +16,11 @@ export default defineConfig(() => {
       // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      // Also ignore data-server/ (PGlite DB + branding.json) so writes there
+      // don't trigger a browser page reload loop.
+      watch: process.env.DISABLE_HMR === 'true' ? null : {
+        ignored: ['**/data-server/**', '**/branding.json'],
+      },
       // Allow mDNS hostname access so the operator can open the app via
       // http://rental-server.local:3000 instead of a raw IP.
       allowedHosts: ['rental-server.local', '.local', 'localhost'],

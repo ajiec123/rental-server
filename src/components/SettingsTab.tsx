@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { UserAccount } from '../types';
+import { BrandingScreensaverForm } from './BrandingScreensaverForm';
 
 export type BrandingPosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
 
@@ -666,6 +667,20 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
           <p className="text-[10px] text-slate-500 italic">
             💡 Perubahan tersimpan otomatis di server. Show/Hide All akan broadcast ke semua station sekaligus.
           </p>
+        </div>
+      )}
+
+      {/* Screensaver Wallpaper & Pricelist */}
+      {currentUser?.role === 'Owner' && (
+        <div className="bg-white border border-slate-200 p-5 rounded-3xl shadow-sm space-y-4">
+          <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
+            <span className="material-symbols-outlined text-lg text-cyan-700">wallpaper</span>
+            Screensaver TV (Wallpaper & Pricelist)
+          </h3>
+          <p className="text-xs text-slate-500">
+            Tampilan "SIAP DISEWA / WAKTU HABIS" di layar TV — wallpaper + daftar harga. TV otomatis memuatnya.
+          </p>
+          <BrandingScreensaverForm />
         </div>
       )}
 

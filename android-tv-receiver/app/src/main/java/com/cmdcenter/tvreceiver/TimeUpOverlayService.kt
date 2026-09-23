@@ -127,7 +127,6 @@ class TimeUpOverlayService : Service() {
     private fun showOverlay(customer: String, persist: Boolean = false) {
         if (!Settings.canDrawOverlays(this)) {
             Log.w(TAG, "SYSTEM_ALERT_WINDOW not granted — falling back to notification only")
-            // Fallback: maybe play a notification
             return
         }
 
@@ -135,73 +134,11 @@ class TimeUpOverlayService : Service() {
         overlayView?.let { try { windowManager?.removeView(it) } catch (_: Exception) {} }
         overlayView = null
 
-        val density = resources.displayMetrics.density
-        fun dp(v: Int) = (v * density).toInt()
-
+        // PURE BLACK full-screen overlay — simulates "screen off" when the
+        // session ends (works over HDMI input, unlike window brightness).
         val root = FrameLayout(this).apply {
-            setBackgroundColor(Color.parseColor("#E6000000")) // 90% black
-            // Make it intercept touches so HDMI remote inputs go through
-            // Customer can't accidentally dismiss it
-            isClickable = true
-            isFocusable = true
+            setBackgroundColor(Color.BLACK) // 100% black
         }
-
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(dp(40), dp(40), dp(40), dp(40))
-        }
-
-        val icon = TextView(this).apply {
-            text = "⏰"
-            gravity = Gravity.CENTER
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 96f)
-        }
-        container.addView(icon)
-
-        val title = TextView(this).apply {
-            text = "WAKTU HABIS"
-            gravity = Gravity.CENTER
-            setTextColor(Color.parseColor("#FFD700")) // gold
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 72f)
-            setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD))
-            setPadding(0, dp(20), 0, 0)
-        }
-        container.addView(title)
-
-        val customerView = TextView(this).apply {
-            text = customer
-            gravity = Gravity.CENTER
-            setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 36f)
-            setPadding(0, dp(30), 0, 0)
-        }
-        container.addView(customerView)
-
-        val subtitle = TextView(this).apply {
-            text = "Silakan ke kasir untuk tambah sesi"
-            gravity = Gravity.CENTER
-            setTextColor(Color.parseColor("#CCCCCC"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
-            setPadding(0, dp(20), 0, 0)
-        }
-        container.addView(subtitle)
-
-        val hint = TextView(this).apply {
-            text = if (persist) {
-                "Sesi telah diakhiri • Layar akan gelap otomatis"
-            } else {
-                "Layar akan gelap otomatis dalam 1 menit"
-            }
-            gravity = Gravity.CENTER
-            setTextColor(Color.parseColor("#888888"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setPadding(0, dp(60), 0, 0)
-            alpha = 0.6f
-        }
-        container.addView(hint)
-
-        root.addView(container)
 
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -212,8 +149,9 @@ class TimeUpOverlayService : Service() {
                 @Suppress("DEPRECATION")
                 WindowManager.LayoutParams.TYPE_SYSTEM_OVERLAY,
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-            PixelFormat.TRANSLUCENT
+                or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.OPAQUE
         ).apply {
             gravity = Gravity.CENTER
         }
@@ -221,7 +159,7 @@ class TimeUpOverlayService : Service() {
         try {
             windowManager?.addView(root, params)
             overlayView = root
-            Log.i(TAG, "✅ Time-up overlay shown for customer: $customer")
+            Log.i(TAG, "Screen-off overlay shown (black)")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to add overlay: ${e.message}")
         }

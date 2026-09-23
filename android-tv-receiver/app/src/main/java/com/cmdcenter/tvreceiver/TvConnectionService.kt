@@ -89,6 +89,10 @@ class TvConnectionService : Service() {
         private const val KEY_STATION_NUMBER = "tv_station_number"
         private const val KEY_SERVER_URL = "server_url"
 
+        // Resolved server HTTP base URL (for branding fetch by MainActivity).
+        @Volatile
+        var resolvedHttpBase: String = "http://192.168.1.8:3000"
+
         fun startWithChannel(context: Context, channel: String) {
             val intent = Intent(context, TvConnectionService::class.java).apply {
                 action = ACTION_START
@@ -153,6 +157,10 @@ class TvConnectionService : Service() {
     private var wsConnected = false
     private var wsStarted = false
     @Volatile private var currentReconnectDelayMs = WS_RECONNECT_DELAY_MS
+
+    // Offset between server clock and TV clock (serverNow - tvNow). Session
+    // countdown math uses this so a skewed TV clock doesn't end sessions early.
+    @Volatile private var serverTimeOffsetMs = 0L
     private val wsHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     private val wsClient: OkHttpClient = OkHttpClient.Builder()
@@ -322,6 +330,9 @@ class TvConnectionService : Service() {
                     val json = JSONObject(text)
                     when (json.optString("type")) {
                         "INIT_STATE", "WS_TIMER_TICK" -> {
+                            // Sync clock offset with the server so session
+                            // countdown math is immune to TV clock skew.
+                            serverTimeOffsetMs = json.optLong("timestamp", System.currentTimeMillis()) - System.currentTimeMillis()
                             val stations = json.optJSONArray("stations")
                             stations?.let { reconcileSessionState(it) }
                         }
@@ -428,56 +439,81 @@ class TvConnectionService : Service() {
      */
     private fun reconcileSessionState(stations: org.json.JSONArray) {
         // Try to find a session explicitly targeting this TV's channel.
-        // Server sends a synthesized field "tvChannel" if paired, otherwise
-        // we fallback to the active session on the station that matches our channel.
+        // Server sends a synthesized field "tvChannel" if paired.
         val current = _state.value
+
+        fun applySession(session: org.json.JSONObject): Boolean {
+            val endTime = session.optLong("endTime", 0L)
+            val sessionId = session.optString("sessionId", "unknown")
+            val customer = session.optString("customerName", "Customer")
+            if (endTime > 0) {
+                val now = System.currentTimeMillis() + serverTimeOffsetMs
+                val remaining = endTime - now
+                when {
+                    remaining <= 0 -> {
+                        if (current !is TvState.Ended) {
+                            timerMonitorJob?.cancel()
+                            _state.value = TvState.Ended(sessionId, customer)
+                            // Screen off (black overlay over HDMI/app)
+                            showTimeUpOverlay(customer, persist = true)
+                        }
+                    }
+                    remaining <= SESSION_WARNING_THRESHOLD_MS -> {
+                        val mins = (remaining / 60_000L).toInt().coerceAtLeast(1)
+                        _state.value = TvState.Warning(sessionId, endTime, customer, mins)
+                        TimeUpOverlayService.dismiss(this)
+                        startTimerMonitor(endTime, customer, sessionId)
+                    }
+                    else -> {
+                        _state.value = TvState.Active(sessionId, endTime, customer)
+                        TimeUpOverlayService.dismiss(this)
+                        startTimerMonitor(endTime, customer, sessionId)
+                    }
+                }
+                return true
+            }
+            return false
+        }
 
         for (i in 0 until stations.length()) {
             val station = stations.optJSONObject(i) ?: continue
             val session = station.optJSONObject("currentSession") ?: continue
-            // Server melampirkan field "tvChannel" (pairing eksplisit atau turunan)
-            // di setiap station pada INIT_STATE & WS_TIMER_TICK. Pencocokan STRICT:
-            // hanya sesi milik station kita — fallback "current is Active" dihapus
-            // karena bisa latch ke sesi station lain (multi-TV salah timer).
             val stationChannel = station.optString("tvChannel", "")
-
             if (stationChannel.isNotEmpty() && stationChannel.equals(tvChannel, ignoreCase = true)) {
-                val endTime = session.optLong("endTime", 0L)
-                val sessionId = session.optString("sessionId", "unknown")
-                val customer = session.optString("customerName", "Customer")
-
-                if (endTime > 0) {
-                    val now = System.currentTimeMillis()
-                    val remaining = endTime - now
-                    when {
-                        remaining <= 0 -> {
-                            if (current !is TvState.Ended) {
-                                _state.value = TvState.Ended(sessionId, customer)
-                                sleepScreen()
-                                showTimeUpOverlay(customer)
-                            }
-                        }
-                        remaining <= SESSION_WARNING_THRESHOLD_MS -> {
-                            val mins = (remaining / 60_000L).toInt().coerceAtLeast(1)
-                            _state.value = TvState.Warning(sessionId, endTime, customer, mins)
-                        }
-                        else -> {
-                            _state.value = TvState.Active(sessionId, endTime, customer)
-                        }
-                    }
-                }
-                return
+                if (applySession(session)) return
             }
         }
 
-        // No active session found for our channel
+        // Fallback: try matching by configured station number (operator may
+        // have only set station number and server didn't attach tvChannel).
+        try {
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val num = prefs.getString(KEY_STATION_NUMBER, null)?.trim()
+            if (!num.isNullOrBlank()) {
+                val padded = num.padStart(2, '0')
+                for (i in 0 until stations.length()) {
+                    val station = stations.optJSONObject(i) ?: continue
+                    val session = station.optJSONObject("currentSession") ?: continue
+                    val stationName = station.optString("name", "")
+                    if (stationName.contains(padded) || stationName.endsWith(padded)) {
+                        if (applySession(session)) return
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Fallback station match failed: ${e.message}")
+        }
+
+        // No active session found for our channel after fallback
         if (current is TvState.Active || current is TvState.Warning) {
             Log.w(TAG, "Session disappeared from server → tamper suspected")
             _state.value = TvState.Tamper(
                 sessionId = (current as? TvState.Active)?.sessionId ?: "unknown",
                 reason = "Session ended on server but TV still running"
             )
+            timerMonitorJob?.cancel()
         } else if (current !is TvState.Ended) {
+            timerMonitorJob?.cancel()
             _state.value = TvState.Idle
         }
     }
@@ -490,13 +526,12 @@ class TvConnectionService : Service() {
         timerMonitorJob?.cancel()
         timerMonitorJob = serviceScope.launch {
             while (isActive) {
-                val remaining = endTime - System.currentTimeMillis()
+                val remaining = endTime - (System.currentTimeMillis() + serverTimeOffsetMs)
                 val current = _state.value
                 when {
                     remaining <= 0L && current !is TvState.Ended -> {
                         _state.value = TvState.Ended(sessionId, customer)
-                        sleepScreen()
-                        showTimeUpOverlay(customer)
+                        showTimeUpOverlay(customer, persist = true)
                     }
                     remaining in 1..SESSION_WARNING_THRESHOLD_MS && current !is TvState.Warning -> {
                         val mins = (remaining / 60_000L).toInt().coerceAtLeast(1)
@@ -529,7 +564,6 @@ class TvConnectionService : Service() {
             }
             "power_off" -> {
                 Log.i(TAG, "[ws] power_off received")
-                sleepScreen()
                 val current = _state.value
                 val sessionId = when (current) {
                     is TvState.Active -> current.sessionId
@@ -545,9 +579,7 @@ class TvConnectionService : Service() {
                 }
                 timerMonitorJob?.cancel()
                 _state.value = TvState.Ended(sessionId, customer)
-                // Fallback "lock screen" when device-owner sleep isn't available:
-                // a full-screen overlay locks the HDMI input so the customer
-                // can't keep playing after the session ends.
+                // Screen off (black overlay over HDMI/app)
                 showTimeUpOverlay(customer, persist = true)
                 sendAck(channel = tvChannel, command = command, success = true)
             }
@@ -763,10 +795,12 @@ class TvConnectionService : Service() {
             !discovered.isNullOrBlank() -> discovered
             else -> wsServerUrl
         }
-        return url.replace("ws://", "http://")
+        val http = url.replace("ws://", "http://")
             .replace("wss://", "https://")
             .removeSuffix("/ws")
             .removeSuffix("/")
+        resolvedHttpBase = http
+        return http
     }
 
     /**

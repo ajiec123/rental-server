@@ -115,6 +115,11 @@ class MainActivity : Activity() {
     private var timerStationView: android.widget.TextView? = null
     private var timerContainer: android.widget.FrameLayout? = null
 
+    // Current TV state + branding/pricelist for the signage screen
+    private var currentTvState: TvConnectionService.TvState = TvConnectionService.TvState.Idle
+    @Volatile private var pricelistText: String = ""
+    @Volatile private var rentalNameText: String = ""
+
     // Latest stations snapshot from server (for cross-referencing our channel)
     @Volatile private var latestStationsSnapshot: org.json.JSONArray? = null
 
@@ -184,22 +189,15 @@ class MainActivity : Activity() {
         kioskModeEnabled = prefs.getBoolean(KEY_KIOSK_MODE, true)
         keepAliveEnabled = prefs.getBoolean(KEY_KEEP_ALIVE, true)
 
-        // Wire Settings button → open SettingsActivity (manual, never auto-launch)
-        findViewById<android.widget.Button>(R.id.btn_open_settings)?.setOnClickListener {
-            val settingsIntent = Intent(this, SettingsActivity::class.java)
-            startActivity(settingsIntent)
-        }
+        // Wire the station-number input + Edit/Save buttons (main screen).
+        wireStationNumberUi()
 
         // Build the live timer card (hidden until WS_TIMER_TICK arrives)
         timerOverlay = buildTimerOverlay()
 
         tvChannel = resolveChannelName()
         if (tvChannel.isBlank()) {
-            Log.w(TAG, "⚠️ Channel not configured. Opening Settings for mandatory setup.")
-            // Auto-navigate to Settings so user MUST set channel
-            runOnUiThread {
-                startActivity(Intent(this, SettingsActivity::class.java))
-            }
+            Log.w(TAG, "⚠️ Channel not configured — waiting for operator to enter station number")
         } else {
             Log.i(TAG, "TV will subscribe to channel: $tvChannel")
         }
@@ -215,10 +213,102 @@ class MainActivity : Activity() {
         // Start the connection service (foreground, sticky)
         TvConnectionService.startWithChannel(this, tvChannel)
 
+        // Request overlay permission (needed for "WAKTU HABIS" full-screen lock).
+        // Opens Android "Display over other apps" settings — operator just toggles
+        // the switch ON. No ADB command needed.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M &&
+            !android.provider.Settings.canDrawOverlays(this)
+        ) {
+            Log.w(TAG, "SYSTEM_ALERT_WINDOW not granted — opening overlay permission settings")
+            try {
+                val intent = android.content.Intent(
+                    android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    android.net.Uri.parse("package:$packageName")
+                )
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+            } catch (_: Exception) {}
+        }
+
         // Observe state changes to update UI when Activity is visible
         observeConnectionState()
 
         Log.i(TAG, "Android TV Receiver ready (channel=$tvChannel, kiosk=$kioskModeEnabled, keepAlive=$keepAliveEnabled)")
+    }
+
+    /**
+     * Wire the signage screen: station-number editor (Edit panel) + Save/Cancel.
+     * The number is editable any time via the discreet "⚙" button.
+     */
+    private fun wireStationNumberUi() {
+        val numberInput = findViewById<android.widget.EditText>(R.id.et_station_number)
+        val previewText = findViewById<android.widget.TextView>(R.id.tv_channel_preview)
+        val editPanel = findViewById<android.widget.LinearLayout>(R.id.edit_panel)
+        val editButton = findViewById<android.widget.Button>(R.id.btn_edit)
+        val saveButton = findViewById<android.widget.Button>(R.id.btn_save)
+        val cancelButton = findViewById<android.widget.Button>(R.id.btn_cancel)
+
+        val savedNumber = prefs.getString(KEY_STATION_NUMBER, null)?.trim().orEmpty()
+
+        fun updatePreview() {
+            val typed = numberInput?.text?.toString()?.trim().orEmpty()
+            previewText?.text = if (typed.isEmpty()) "Belum ada nomor station" else "Channel aktif: ${stationNumberToChannel(typed)}"
+        }
+
+        // First launch / no number yet → auto-open the editor so the operator
+        // can enter the station number.
+        if (savedNumber.isEmpty()) {
+            editPanel?.visibility = android.view.View.VISIBLE
+            numberInput?.isEnabled = true
+            numberInput?.requestFocus()
+            updatePreview()
+        }
+
+        editButton?.setOnClickListener {
+            numberInput?.setText(savedNumber)
+            numberInput?.isEnabled = true
+            editPanel?.visibility = android.view.View.VISIBLE
+            numberInput?.requestFocus()
+            updatePreview()
+        }
+
+        cancelButton?.setOnClickListener {
+            editPanel?.visibility = android.view.View.GONE
+        }
+
+        saveButton?.setOnClickListener {
+            val typed = numberInput?.text?.toString()?.trim().orEmpty()
+            val numInt = typed.toIntOrNull()
+            if (numInt == null || numInt < 1 || numInt > 99) {
+                android.widget.Toast.makeText(this, "❌ Nomor harus 1 sampai 99", android.widget.Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            prefs.edit().putString(KEY_STATION_NUMBER, typed).apply()
+            android.widget.Toast.makeText(this, "✅ Tersimpan! Menerapkan...", android.widget.Toast.LENGTH_SHORT).show()
+            val intent = Intent(this, MainActivity::class.java)
+            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+            finish()
+        }
+
+        numberInput?.setOnFocusChangeListener { _, hasFocus ->
+            if (!hasFocus) updatePreview()
+        }
+    }
+
+    /**
+     * Hidden shortcut to open the Settings screen (full options) via remote.
+     * Press MENU (82) or SETTINGS (176).
+     */
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent): Boolean {
+        if (keyCode == android.view.KeyEvent.KEYCODE_MENU ||
+            keyCode == android.view.KeyEvent.KEYCODE_SETTINGS
+        ) {
+            Log.i(TAG, "Remote shortcut: opening Settings")
+            startActivity(Intent(this, SettingsActivity::class.java))
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
     }
 
     /**
@@ -250,29 +340,21 @@ class MainActivity : Activity() {
     }
 
     private fun renderTvState(state: TvConnectionService.TvState) {
-        val statusView = findViewById<android.widget.TextView>(R.id.tv_ws_status)
-        when (state) {
-            is TvConnectionService.TvState.Idle -> {
-                statusView?.text = "Status: ⚪ Idle (no active session)"
-            }
-            is TvConnectionService.TvState.Active -> {
-                val remaining = (state.endTime - System.currentTimeMillis()) / 60_000L
-                statusView?.text = "Status: 🟢 Active: ${state.customer} (${remaining}m left)"
-            }
-            is TvConnectionService.TvState.Warning -> {
-                statusView?.text = "Status: 🟡 ${state.minutesLeft}m left: ${state.customer}"
-            }
-            is TvConnectionService.TvState.Ended -> {
-                statusView?.text = "Status: 🔴 TIME UP: ${state.customer}"
-            }
-            is TvConnectionService.TvState.Tamper -> {
-                statusView?.text = "🚨 Tamper: ${state.reason}"
-            }
+        currentTvState = state
+        // Minimal: just a small status line for debugging. The real visual
+        // state is the black screen-off overlay (TimeUpOverlayService).
+        val statusView = findViewById<android.widget.TextView>(R.id.tv_status)
+        statusView?.text = when (state) {
+            is TvConnectionService.TvState.Idle -> "IDLE — layar mati (overlay hitam)"
+            is TvConnectionService.TvState.Active -> "ACTIVE — sesi berjalan"
+            is TvConnectionService.TvState.Warning -> "WARNING — sisa waktu sedikit"
+            is TvConnectionService.TvState.Ended -> "ENDED — layar mati (overlay hitam)"
+            is TvConnectionService.TvState.Tamper -> "TAMPER — ${state.reason}"
         }
     }
 
     private fun renderConnState(conn: TvConnectionService.ConnState) {
-        val statusView = findViewById<android.widget.TextView>(R.id.tv_ws_status)
+        val statusView = findViewById<android.widget.TextView>(R.id.tv_status)
         when (conn) {
             is TvConnectionService.ConnState.Connected -> {
                 statusView?.text = "🟢 Connected (${conn.channel})"
@@ -284,6 +366,16 @@ class MainActivity : Activity() {
                 statusView?.text = "🔴 Disconnected: ${conn.reason} (retry in ${conn.nextRetryMs / 1000}s)"
             }
         }
+    }
+
+    /** Format a countdown (HH:MM:SS or MM:SS) from an endTime timestamp. */
+    private fun formatRemaining(endTime: Long): String {
+        val remaining = endTime - System.currentTimeMillis()
+        if (remaining <= 0) return "00:00"
+        val h = remaining / 3_600_000L
+        val m = (remaining % 3_600_000L) / 60_000L
+        val s = (remaining % 60_000L) / 1000L
+        return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
     }
 
     /**
@@ -608,25 +700,11 @@ class MainActivity : Activity() {
      */
     private fun updateWsStatusUI(connected: Boolean, channel: String) {
         runOnUiThread {
-            val statusView = findViewById<android.widget.TextView>(R.id.tv_ws_status)
-            val channelView = findViewById<android.widget.TextView>(R.id.tv_channel_label)
-            val mdnsView = findViewById<android.widget.TextView>(R.id.tv_mdns_status)
-            if (channelView != null) {
-                channelView.text = "📺 Channel: $channel"
-            }
-            if (statusView != null) {
-                statusView.text = if (connected) {
-                    "Status: 🟢 Connected & Subscribed"
-                } else {
-                    "Status: 🔴 Disconnected (auto-reconnecting...)"
-                }
-            }
-            if (mdnsView != null) {
-                mdnsView.text = if (serverDiscoveredViaMdns) {
-                    "🪄 Auto-Discovery: ✅ ON (${wsServerUrl.removePrefix("ws://")})"
-                } else {
-                    "🪄 Auto-Discovery: ⏳ searching..."
-                }
+            val statusView = findViewById<android.widget.TextView>(R.id.tv_status)
+            statusView?.text = if (connected) {
+                "🟢 Connected & Subscribed ($channel)"
+            } else {
+                "🔴 Disconnected (auto-reconnecting...)"
             }
         }
     }
