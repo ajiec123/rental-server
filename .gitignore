@@ -33,3 +33,11 @@ test-backup-restore.ps1
 verify-stations.ps1
 inspect-backups.ps1
 list-folders.ps1
+
+# ===== Android build cache (Gradle) =====
+android-tv-receiver/.gradle/
+
+# ===== Runtime branding data (wallpaper uploads) =====
+# branding.json berisi base64 wallpaper (bisa ber-MB) — data runtime yang
+# di-upload lewat operator app, bukan source code.
+data-server/branding.json

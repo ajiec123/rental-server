@@ -350,6 +350,14 @@ class TvConnectionService : Service() {
                             val data = json.optJSONObject("data")
                             data?.let { handleIncomingCommand(it) }
                         }
+                        "BRANDING_UPDATE" -> {
+                            // Operator uploaded a new screensaver wallpaper —
+                            // drop the cache and refetch so the next overlay/
+                            // idle screen shows the new image.
+                            Log.i(TAG, "[ws] BRANDING_UPDATE — refreshing wallpaper")
+                            WallpaperCache.invalidate()
+                            WallpaperCache.fetchAsync()
+                        }
                         "CHANNEL_TAKEN" -> {
                             // Server rejected our SUBSCRIBE because another TV
                             // already holds this channel. Show user a clear Toast

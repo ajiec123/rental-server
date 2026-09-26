@@ -2258,7 +2258,12 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ pairings: next }),
-          }).catch((e) => console.warn('[tv-pairings] save failed:', e));
+          })
+            .then(() => triggerActionToast(`✅ Pairing ${pairing.label} → ${pairing.tvChannel} tersimpan`, 'success'))
+            .catch((e) => {
+              console.warn('[tv-pairings] save failed:', e);
+              triggerActionToast(`❌ Gagal simpan pairing: ${(e as Error).message}`, 'warning');
+            });
         }}
       />
 

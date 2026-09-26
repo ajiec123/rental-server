@@ -9,7 +9,6 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
-import android.graphics.Typeface
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
@@ -18,42 +17,23 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.util.Log
-import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
-import android.widget.LinearLayout
-import android.widget.TextView
-import android.media.RingtoneManager
-import android.media.Ringtone
+import android.widget.ImageView
 
 /**
- * TimeUpOverlayService — shows a FULL-SCREEN overlay on top of HDMI output
- * when a customer's session ends. Uses TYPE_APPLICATION_OVERLAY so it can
- * draw on top of the PlayStation's HDMI feed (or any other app).
+ * TimeUpOverlayService — SCREENSAVER overlay shown fullscreen on top of the
+ * HDMI output (or any app) when a session ends / the unit is on standby.
  *
- * Why this is needed:
- *   - When player's HDMI source is selected, our app is in background.
- *     Normal Activity overlay won't show.
- *   - TYPE_APPLICATION_OVERLAY (with SYSTEM_ALERT_WINDOW permission) lets
- *     us draw on top of any other app, including HDMI input.
+ * Instead of a black screen, it displays the rental's wallpaper uploaded
+ * from the operator app (Settings → Screensaver TV → /api/branding/wallpaper).
+ * Falls back to pure black while the wallpaper is still downloading or when
+ * none is configured.
  *
- * Permission setup:
+ * Permission: SYSTEM_ALERT_WINDOW (granted via appops during install).
  *   adb shell appops set com.cmdcenter.tvreceiver SYSTEM_ALERT_WINDOW allow
- *   OR: Settings → Apps → Special Access → Display over other apps
- *
- * Lifecycle:
- *   - TimeUpOverlayService.show(context, customerName) → starts service
- *     which adds overlay view, plays alert tone, and exits after 2 min
- *     if operator doesn't dismiss.
- *   - TimeUpOverlayService.dismiss(context) → service removes overlay.
- *
- * Customer experience:
- *   - Big "WAKTU HABIS" banner + customer name
- *   - "Silakan ke kasir untuk tambah sesi" subtitle
- *   - Alert tone (3 beeps)
- *   - Auto-dismiss after 2 minutes if no action
  */
 class TimeUpOverlayService : Service() {
 
@@ -61,9 +41,12 @@ class TimeUpOverlayService : Service() {
         private const val TAG = "TimeUpOverlay"
         private const val ACTION_SHOW = "com.cmdcenter.tvreceiver.SHOW_TIMEUP"
         private const val ACTION_DISMISS = "com.cmdcenter.tvreceiver.DISMISS_TIMEUP"
-        private const val FADE_TO_BLACK_AFTER_MS = 60_000L // 1 minute
         private const val NOTIFICATION_ID = 7779
         private const val CHANNEL_ID = "timeup_overlay"
+
+        /** True while the screensaver overlay window is on screen. */
+        @Volatile
+        var isShowing = false
 
         fun show(context: Context, customerName: String, persist: Boolean = false) {
             val intent = Intent(context, TimeUpOverlayService::class.java).apply {
@@ -88,8 +71,6 @@ class TimeUpOverlayService : Service() {
     private var overlayView: View? = null
     private var windowManager: WindowManager? = null
     private val handler = Handler(Looper.getMainLooper())
-    private val fadeToBlackRunnable = Runnable { fadeToBlack() }
-    private var ringtone: Ringtone? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -109,35 +90,41 @@ class TimeUpOverlayService : Service() {
                 return START_NOT_STICKY
             }
             else -> {
-                val customer = intent?.getStringExtra("customer") ?: "Customer"
-                val persist = intent?.getBooleanExtra("persist", false) ?: false
-                // persist=true → overlay kiosk-lock (operator mengakhiri sesi).
-                // persist=false → overlay waktu habis biasa.
-                // Keduanya: tampilkan "WAKTU HABIS" 1 menit, lalu fade ke layar
-                // hitam penuh (simulasi sleep/mati) sampai power_on berikutnya.
-                handler.removeCallbacks(fadeToBlackRunnable)
-                handler.postDelayed(fadeToBlackRunnable, FADE_TO_BLACK_AFTER_MS)
-                showOverlay(customer, persist)
-                playAlertTone()
+                showOverlay()
             }
         }
         return START_STICKY
     }
 
-    private fun showOverlay(customer: String, persist: Boolean = false) {
+    private fun buildWallpaperView(bitmap: android.graphics.Bitmap): ImageView {
+        return ImageView(this).apply {
+            setImageBitmap(bitmap)
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+    }
+
+    private fun showOverlay() {
         if (!Settings.canDrawOverlays(this)) {
-            Log.w(TAG, "SYSTEM_ALERT_WINDOW not granted — falling back to notification only")
+            Log.w(TAG, "SYSTEM_ALERT_WINDOW not granted — screensaver cannot show")
             return
         }
 
         // Remove existing if any
-        overlayView?.let { try { windowManager?.removeView(it) } catch (_: Exception) {} }
-        overlayView = null
+        removeOverlayView()
 
-        // PURE BLACK full-screen overlay — simulates "screen off" when the
-        // session ends (works over HDMI input, unlike window brightness).
+        // Screensaver root: black background with the wallpaper on top
+        // (CENTER_CROP fills the whole screen). Falls back to plain black
+        // when no wallpaper is cached yet.
         val root = FrameLayout(this).apply {
-            setBackgroundColor(Color.BLACK) // 100% black
+            setBackgroundColor(Color.BLACK)
+        }
+        val cached = WallpaperCache.bitmap
+        if (cached != null) {
+            root.addView(buildWallpaperView(cached))
         }
 
         val params = WindowManager.LayoutParams(
@@ -159,45 +146,40 @@ class TimeUpOverlayService : Service() {
         try {
             windowManager?.addView(root, params)
             overlayView = root
-            Log.i(TAG, "Screen-off overlay shown (black)")
+            isShowing = true
+            Log.i(TAG, "Screensaver overlay shown (wallpaper=${cached != null})")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to add overlay: ${e.message}")
+            return
         }
-    }
 
-    private fun playAlertTone() {
-        try {
-            // 3 short beeps
-            val tone = ToneGenerator(AudioManager.STREAM_MUSIC, 100)
-            tone.startTone(ToneGenerator.TONE_PROP_BEEP, 300)
-            handler.postDelayed({ tone.startTone(ToneGenerator.TONE_PROP_BEEP, 300) }, 500)
-            handler.postDelayed({ tone.startTone(ToneGenerator.TONE_PROP_BEEP, 600) }, 1000)
-            handler.postDelayed({ tone.release() }, 1800)
-        } catch (e: Exception) {
-            Log.w(TAG, "ToneGenerator failed: ${e.message}")
-        }
-    }
-
-    private fun fadeToBlack() {
-        try {
-            overlayView?.let { root ->
-                root.setBackgroundColor(Color.BLACK)
-                if (root is FrameLayout) {
-                    root.removeAllViews()
+        // Wallpaper not cached yet — fetch it and swap the view in-place.
+        if (cached == null) {
+            WallpaperCache.fetchAsync { loaded ->
+                if (loaded != null && isShowing) {
+                    handler.post {
+                        val current = overlayView as? FrameLayout ?: return@post
+                        try {
+                            current.removeAllViews()
+                            current.addView(buildWallpaperView(loaded))
+                            Log.i(TAG, "Screensaver wallpaper loaded and displayed")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to swap wallpaper: ${e.message}")
+                        }
+                    }
                 }
             }
-            Log.i(TAG, "Time-up overlay faded to full black (simulating sleep)")
-        } catch (e: Exception) {
-            Log.w(TAG, "fadeToBlack failed: ${e.message}")
         }
+    }
+
+    private fun removeOverlayView() {
+        overlayView?.let { try { windowManager?.removeView(it) } catch (_: Exception) {} }
+        overlayView = null
     }
 
     private fun selfDismiss() {
-        overlayView?.let { try { windowManager?.removeView(it) } catch (_: Exception) {} }
-        overlayView = null
-        ringtone?.stop()
-        ringtone = null
-        handler.removeCallbacks(fadeToBlackRunnable)
+        removeOverlayView()
+        isShowing = false
         stopSelf()
     }
 
@@ -206,7 +188,7 @@ class TimeUpOverlayService : Service() {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             if (nm.getNotificationChannel(CHANNEL_ID) == null) {
                 nm.createNotificationChannel(
-                    NotificationChannel(CHANNEL_ID, "Time Up Overlay", NotificationManager.IMPORTANCE_LOW).apply {
+                    NotificationChannel(CHANNEL_ID, "Screensaver Overlay", NotificationManager.IMPORTANCE_LOW).apply {
                         setShowBadge(false)
                         enableLights(false)
                         enableVibration(false)
@@ -228,8 +210,8 @@ class TimeUpOverlayService : Service() {
         }
         return builder
             .setSmallIcon(android.R.drawable.ic_menu_compass)
-            .setContentTitle("Sesi Berakhir")
-            .setContentText("Waktu bermain habis")
+            .setContentTitle("Command Center TV")
+            .setContentText("Screensaver aktif")
             .setContentIntent(pi)
             .setOngoing(true)
             .setPriority(Notification.PRIORITY_LOW)

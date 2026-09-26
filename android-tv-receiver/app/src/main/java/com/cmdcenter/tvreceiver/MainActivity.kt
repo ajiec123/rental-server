@@ -120,6 +120,22 @@ class MainActivity : Activity() {
     @Volatile private var pricelistText: String = ""
     @Volatile private var rentalNameText: String = ""
 
+    // Screensaver wallpaper sync — pulls WallpaperCache into iv_wallpaper so
+    // the idle screen shows the rental wallpaper (matches the overlay that
+    // covers HDMI). Runs every 5s; cheap reference comparison.
+    private var lastWallpaperShown: android.graphics.Bitmap? = null
+    private val wallpaperSyncHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val wallpaperSyncRunnable = object : Runnable {
+        override fun run() {
+            syncWallpaper()
+            // Auto-retry when no wallpaper yet (throttled inside fetchAsync).
+            if (WallpaperCache.bitmap == null) {
+                WallpaperCache.fetchAsync()
+            }
+            wallpaperSyncHandler.postDelayed(this, 5_000)
+        }
+    }
+
     // Latest stations snapshot from server (for cross-referencing our channel)
     @Volatile private var latestStationsSnapshot: org.json.JSONArray? = null
 
@@ -233,6 +249,13 @@ class MainActivity : Activity() {
         // Observe state changes to update UI when Activity is visible
         observeConnectionState()
 
+        // Start the screensaver wallpaper sync (fetch on connect, refresh
+        // every 5s so operator uploads appear without restart).
+        wallpaperSyncHandler.post(wallpaperSyncRunnable)
+        if (WallpaperCache.bitmap == null) {
+            WallpaperCache.fetchAsync()
+        }
+
         Log.i(TAG, "Android TV Receiver ready (channel=$tvChannel, kiosk=$kioskModeEnabled, keepAlive=$keepAliveEnabled)")
     }
 
@@ -297,13 +320,19 @@ class MainActivity : Activity() {
     }
 
     /**
-     * Hidden shortcut to open the Settings screen (full options) via remote.
-     * Press MENU (82) or SETTINGS (176).
+     * Remote shortcut: MENU (82) or SETTINGS (176).
+     * First press dismisses the screensaver overlay (so the ⚙ button becomes
+     * visible/reachable); second press opens the full Settings screen.
      */
     override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent): Boolean {
         if (keyCode == android.view.KeyEvent.KEYCODE_MENU ||
             keyCode == android.view.KeyEvent.KEYCODE_SETTINGS
         ) {
+            if (TimeUpOverlayService.isShowing) {
+                Log.i(TAG, "Remote shortcut: dismissing screensaver overlay")
+                TimeUpOverlayService.dismiss(this)
+                return true
+            }
             Log.i(TAG, "Remote shortcut: opening Settings")
             startActivity(Intent(this, SettingsActivity::class.java))
             return true
@@ -342,13 +371,13 @@ class MainActivity : Activity() {
     private fun renderTvState(state: TvConnectionService.TvState) {
         currentTvState = state
         // Minimal: just a small status line for debugging. The real visual
-        // state is the black screen-off overlay (TimeUpOverlayService).
+        // state is the screensaver overlay (TimeUpOverlayService) + wallpaper.
         val statusView = findViewById<android.widget.TextView>(R.id.tv_status)
         statusView?.text = when (state) {
-            is TvConnectionService.TvState.Idle -> "IDLE — layar mati (overlay hitam)"
+            is TvConnectionService.TvState.Idle -> "IDLE — standby (screensaver)"
             is TvConnectionService.TvState.Active -> "ACTIVE — sesi berjalan"
             is TvConnectionService.TvState.Warning -> "WARNING — sisa waktu sedikit"
-            is TvConnectionService.TvState.Ended -> "ENDED — layar mati (overlay hitam)"
+            is TvConnectionService.TvState.Ended -> "ENDED — standby (screensaver)"
             is TvConnectionService.TvState.Tamper -> "TAMPER — ${state.reason}"
         }
 
@@ -364,6 +393,7 @@ class MainActivity : Activity() {
             } else {
                 window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             }
+            syncWallpaper()
         }
     }
 
@@ -372,6 +402,10 @@ class MainActivity : Activity() {
         when (conn) {
             is TvConnectionService.ConnState.Connected -> {
                 statusView?.text = "🟢 Connected (${conn.channel})"
+                // Refresh the screensaver wallpaper on (re)connect.
+                if (WallpaperCache.bitmap == null) {
+                    WallpaperCache.fetchAsync()
+                }
             }
             is TvConnectionService.ConnState.Connecting -> {
                 statusView?.text = "🟡 Connecting..."
@@ -380,6 +414,23 @@ class MainActivity : Activity() {
                 statusView?.text = "🔴 Disconnected: ${conn.reason} (retry in ${conn.nextRetryMs / 1000}s)"
             }
         }
+    }
+
+    /**
+     * Sync the cached screensaver wallpaper into the idle screen. The wallpaper
+     * shows when the TV is on standby (Idle/Ended/Tamper — no active session)
+     * and hides while a session runs, so the HDMI game is unobstructed.
+     */
+    private fun syncWallpaper() {
+        val iv = findViewById<android.widget.ImageView>(R.id.iv_wallpaper) ?: return
+        val bmp = WallpaperCache.bitmap
+        if (bmp != null && bmp !== lastWallpaperShown) {
+            iv.setImageBitmap(bmp)
+            lastWallpaperShown = bmp
+        }
+        val show = bmp != null && currentTvState !is TvConnectionService.TvState.Active &&
+            currentTvState !is TvConnectionService.TvState.Warning
+        iv.visibility = if (show) android.view.View.VISIBLE else android.view.View.GONE
     }
 
     /** Format a countdown (HH:MM:SS or MM:SS) from an endTime timestamp. */
@@ -464,6 +515,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        wallpaperSyncHandler.removeCallbacks(wallpaperSyncRunnable)
         super.onDestroy()
         isRunning = false
         try {

@@ -78,16 +78,21 @@ export const TVControlPanel: React.FC<TVControlPanelProps> = ({
   const [busyCmd, setBusyCmd] = useState<string | null>(null);
   const [pairingChannel, setPairingChannel] = useState<string>('');
   const [pairingLabel, setPairingLabel] = useState<string>('');
+  const [savedFlash, setSavedFlash] = useState(false);
 
   useEffect(() => {
     if (isOpen && station) {
       const current = pairings.find((p) => p.stationId === station.id);
       setPairingChannel(current?.tvChannel || buildDerivedStationChannel(station));
       setPairingLabel(current?.label || station.name);
+      setSavedFlash(false);
     }
   }, [isOpen, station, pairings]);
 
   if (!isOpen || !station) return null;
+
+  const savedChannel = pairings.find((p) => p.stationId === station.id)?.tvChannel;
+  const hasUnsavedChanges = pairingChannel.trim() !== (savedChannel ?? buildDerivedStationChannel(station));
 
   const handleSend = (command: string) => {
     setBusyCmd(command);
@@ -104,13 +109,15 @@ export const TVControlPanel: React.FC<TVControlPanelProps> = ({
       createdAt: Date.now(),
       lastSeenAt: Date.now(),
     });
+    setSavedFlash(true);
+    setTimeout(() => setSavedFlash(false), 2500);
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in">
-      <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-md overflow-hidden shadow-2xl">
+      <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-md overflow-hidden shadow-2xl max-h-[92vh] flex flex-col">
         {/* Header */}
-        <div className="p-5 bg-gradient-to-r from-slate-50 to-slate-100 border-b border-slate-200 flex justify-between items-center">
+        <div className="p-5 bg-gradient-to-r from-slate-50 to-slate-100 border-b border-slate-200 flex justify-between items-center shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-2xl bg-slate-900 text-white flex items-center justify-center shadow-sm">
               <span className="material-symbols-outlined text-2xl">tv</span>
@@ -130,7 +137,7 @@ export const TVControlPanel: React.FC<TVControlPanelProps> = ({
           </button>
         </div>
 
-        <div className="p-5 space-y-2.5">
+        <div className="p-5 space-y-2.5 overflow-y-auto">
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 space-y-2">
             <div className="text-[11px] font-semibold text-slate-700">Pairing channel</div>
             <input
@@ -146,6 +153,11 @@ export const TVControlPanel: React.FC<TVControlPanelProps> = ({
               placeholder="Nama receiver"
             />
             <div className="text-[10px] text-slate-500">Channel default: {buildDerivedStationChannel(station)}</div>
+            {hasUnsavedChanges && !savedFlash && (
+              <div className="text-[10px] font-bold text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
+                ⚠ Perubahan belum disimpan — klik "Simpan Pairing" di bawah untuk menerapkan.
+              </div>
+            )}
             {Object.keys(tvClaims).length > 0 && (
               <div className="space-y-1">
                 <div className="text-[10px] font-semibold text-slate-600 uppercase tracking-wide">
@@ -175,9 +187,11 @@ export const TVControlPanel: React.FC<TVControlPanelProps> = ({
             <button
               type="button"
               onClick={handleSavePairing}
-              className="w-full rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white"
+              className={`w-full rounded-xl px-3 py-2 text-sm font-semibold text-white transition-all active:scale-95 cursor-pointer ${
+                savedFlash ? 'bg-emerald-600' : 'bg-slate-900 hover:bg-slate-800'
+              }`}
             >
-              Simpan pairing ke server
+              {savedFlash ? '✓ Pairing tersimpan' : '💾 Simpan Pairing'}
             </button>
           </div>
 
@@ -216,7 +230,7 @@ export const TVControlPanel: React.FC<TVControlPanelProps> = ({
           })}
         </div>
 
-        <div className="p-4 bg-slate-50 border-t border-slate-200">
+        <div className="p-4 bg-slate-50 border-t border-slate-200 shrink-0">
           <div className="flex items-start gap-2 text-[10px] text-slate-600 leading-relaxed">
             <span className="material-symbols-outlined text-cyan-600 text-sm shrink-0">
               tips_and_updates

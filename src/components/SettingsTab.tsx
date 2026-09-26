@@ -741,15 +741,15 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
         </div>
       )}
 
-      {/* Screensaver Wallpaper & Pricelist */}
+      {/* Screensaver Wallpaper */}
       {currentUser?.role === 'Owner' && (
         <div className="bg-white border border-slate-200 p-5 rounded-3xl shadow-sm space-y-4">
           <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
             <span className="material-symbols-outlined text-lg text-cyan-700">wallpaper</span>
-            Screensaver TV (Wallpaper & Pricelist)
+            Screensaver TV (Wallpaper)
           </h3>
           <p className="text-xs text-slate-500">
-            Tampilan "SIAP DISEWA / WAKTU HABIS" di layar TV — wallpaper + daftar harga. TV otomatis memuatnya.
+            Wallpaper yang tampil di TV saat standby (tidak ada sewa aktif) — termasuk saat sesi berakhir, menutup tampilan game HDMI. TV otomatis memuatnya.
           </p>
           <BrandingScreensaverForm />
         </div>

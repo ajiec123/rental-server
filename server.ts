@@ -5,6 +5,22 @@ import dgram from 'node:dgram';
 import os from 'node:os';
 import fs from 'node:fs/promises';
 import { WebSocketServer, WebSocket } from 'ws';
+
+// ===== CRASH GUARD =====
+// Node 15+ terminates the process on ANY unhandled promise rejection, and
+// Express 4 does NOT catch async route errors — one throwing async route
+// (fs errors on branding/backup, PGlite internals, bonjour-service mDNS
+// timers) has killed this server repeatedly. Log the full stack and keep
+// serving instead of dying. For a rental POS, uptime beats purity.
+process.on('unhandledRejection', (reason) => {
+  console.error('[crash-guard] UNHANDLED REJECTION — server kept alive:');
+  console.error(reason instanceof Error ? reason.stack : reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[crash-guard] UNCAUGHT EXCEPTION — server kept alive:');
+  console.error(err.stack ?? err);
+});
+
 import {
   loadAll,
   saveStations,
@@ -289,6 +305,24 @@ async function startServer() {
   app.get('/api/stations', (req, res) => {
     res.json({ stations, transactions, tvPairings });
   });
+
+  /**
+   * Wrap an async route so a rejection becomes a 500 response instead of an
+   * unhandled rejection (which kills the Node process). Express 4 does not
+   * catch async errors by itself.
+   */
+  function asyncRoute(fn: (req: express.Request, res: express.Response) => Promise<unknown>): express.RequestHandler {
+    return async (req: express.Request, res: express.Response) => {
+      try {
+        await fn(req, res);
+      } catch (err) {
+        console.error('[route-error]', req.method, req.path, (err as Error)?.stack ?? err);
+        if (!res.headersSent) {
+          res.status(500).json({ error: (err as Error)?.message ?? 'Internal server error' });
+        }
+      }
+    };
+  }
 
   // REST API: trigger TV command via HTTP (alternative to WebSocket)
   app.post('/api/tv-control', async (req, res) => {
@@ -938,31 +972,47 @@ async function startServer() {
     rentalName: string; // rental display name shown on TV screensaver
   }
 
+  // In-memory mirror of branding.json. loadBranding() falls back to this when
+  // the file is missing/corrupt so a transient read error can NEVER wipe the
+  // wallpaper (a subsequent POST used to overwrite the file with defaults).
+  let brandingCache: BrandingConfig | null = null;
+
   async function loadBranding(): Promise<BrandingConfig> {
     try {
       const raw = await fs.readFile(BRANDING_FILE, 'utf-8');
       const parsed = JSON.parse(raw);
-      return {
+      const cfg: BrandingConfig = {
         pricelist: typeof parsed.pricelist === 'string' ? parsed.pricelist : '',
         wallpaper: typeof parsed.wallpaper === 'string' ? parsed.wallpaper : null,
         rentalName: typeof parsed.rentalName === 'string' ? parsed.rentalName : '',
       };
+      brandingCache = cfg;
+      return cfg;
     } catch {
+      if (brandingCache) {
+        console.warn('[branding] file unreadable — using in-memory cache (data preserved)');
+        return brandingCache;
+      }
       return { pricelist: '', wallpaper: null, rentalName: '' };
     }
   }
 
   async function saveBranding(cfg: BrandingConfig): Promise<void> {
     await fs.mkdir(DATA_DIR_PATH, { recursive: true });
-    await fs.writeFile(BRANDING_FILE, JSON.stringify(cfg, null, 2), 'utf-8');
+    // Atomic write: write to a temp file then rename, so a crash mid-write
+    // can never leave a truncated/corrupt branding.json behind.
+    const tmp = BRANDING_FILE + '.tmp';
+    await fs.writeFile(tmp, JSON.stringify(cfg, null, 2), 'utf-8');
+    await fs.rename(tmp, BRANDING_FILE);
+    brandingCache = cfg;
   }
 
-  app.get('/api/branding', async (_req, res) => {
+  app.get('/api/branding', asyncRoute(async (_req, res) => {
     const cfg = await loadBranding();
     res.json({ pricelist: cfg.pricelist, hasWallpaper: !!cfg.wallpaper, rentalName: cfg.rentalName });
-  });
+  }));
 
-  app.get('/api/branding/wallpaper', async (_req, res) => {
+  app.get('/api/branding/wallpaper', asyncRoute(async (_req, res) => {
     const cfg = await loadBranding();
     if (!cfg.wallpaper) return res.status(404).end();
     const match = cfg.wallpaper.match(/^data:([^;]+);base64,(.*)$/s);
@@ -971,9 +1021,9 @@ async function startServer() {
     const buf = Buffer.from(match[2], 'base64');
     res.setHeader('Content-Type', mime);
     res.send(buf);
-  });
+  }));
 
-  app.post('/api/branding', async (req, res) => {
+  app.post('/api/branding', asyncRoute(async (req, res) => {
     const body = req.body || {};
     const cfg = await loadBranding();
     if (typeof body.pricelist === 'string') cfg.pricelist = body.pricelist;
@@ -990,7 +1040,7 @@ async function startServer() {
       timestamp: Date.now(),
     });
     res.json({ ok: true, pricelist: cfg.pricelist, rentalName: cfg.rentalName, hasWallpaper: !!cfg.wallpaper });
-  });
+  }));
 
   // Cache cleaner page — clears all cmdcenter_* localStorage keys then redirects to app.
   // Useful when client and server state diverge (e.g. after wiping DB rows from REST).
