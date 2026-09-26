@@ -351,6 +351,20 @@ class MainActivity : Activity() {
             is TvConnectionService.TvState.Ended -> "ENDED — layar mati (overlay hitam)"
             is TvConnectionService.TvState.Tamper -> "TAMPER — ${state.reason}"
         }
+
+        // Keep-screen-on toggle: during a session the screen must stay on
+        // (customer is playing). When idle/ended, release the flag so the TV's
+        // built-in auto-sleep can physically turn off the panel after its
+        // timeout (backlight off — a real "sleep").
+        val keepOn = state is TvConnectionService.TvState.Active ||
+            state is TvConnectionService.TvState.Warning
+        runOnUiThread {
+            if (keepOn) {
+                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            } else {
+                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
     }
 
     private fun renderConnState(conn: TvConnectionService.ConnState) {

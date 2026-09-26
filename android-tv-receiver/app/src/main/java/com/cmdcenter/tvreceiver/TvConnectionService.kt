@@ -93,6 +93,16 @@ class TvConnectionService : Service() {
         @Volatile
         var resolvedHttpBase: String = "http://192.168.1.8:3000"
 
+        // Branding overlay config (stored from the operator's "set" broadcast).
+        @Volatile var brandingText: String = "COMMAND CENTER"
+        @Volatile var brandingSubtitle: String = ""
+        @Volatile var brandingColor: String = "#00E5FF"
+        @Volatile var brandingBg: String = "#80000000"
+        @Volatile var brandingPosition: String = "top-right"
+        @Volatile var timerPosition: String = "top-right"
+        @Volatile var timerColor: String = "#FFD700"
+        @Volatile var timerSize: Int = 16
+
         fun startWithChannel(context: Context, channel: String) {
             val intent = Intent(context, TvConnectionService::class.java).apply {
                 action = ACTION_START
@@ -454,20 +464,27 @@ class TvConnectionService : Service() {
                         if (current !is TvState.Ended) {
                             timerMonitorJob?.cancel()
                             _state.value = TvState.Ended(sessionId, customer)
-                            // Screen off (black overlay over HDMI/app)
+                            // Screen off (black overlay over HDMI/app) + hide branding
+                            hideBranding()
                             showTimeUpOverlay(customer, persist = true)
                         }
                     }
                     remaining <= SESSION_WARNING_THRESHOLD_MS -> {
-                        val mins = (remaining / 60_000L).toInt().coerceAtLeast(1)
-                        _state.value = TvState.Warning(sessionId, endTime, customer, mins)
-                        TimeUpOverlayService.dismiss(this)
-                        startTimerMonitor(endTime, customer, sessionId)
+                        if (current !is TvState.Warning) {
+                            val mins = (remaining / 60_000L).toInt().coerceAtLeast(1)
+                            _state.value = TvState.Warning(sessionId, endTime, customer, mins)
+                            TimeUpOverlayService.dismiss(this)
+                            showBrandingWithTimer(endTime)
+                            startTimerMonitor(endTime, customer, sessionId)
+                        }
                     }
                     else -> {
-                        _state.value = TvState.Active(sessionId, endTime, customer)
-                        TimeUpOverlayService.dismiss(this)
-                        startTimerMonitor(endTime, customer, sessionId)
+                        if (current !is TvState.Active) {
+                            _state.value = TvState.Active(sessionId, endTime, customer)
+                            TimeUpOverlayService.dismiss(this)
+                            showBrandingWithTimer(endTime)
+                            startTimerMonitor(endTime, customer, sessionId)
+                        }
                     }
                 }
                 return true
@@ -512,6 +529,7 @@ class TvConnectionService : Service() {
                 reason = "Session ended on server but TV still running"
             )
             timerMonitorJob?.cancel()
+            hideBranding()
         } else if (current !is TvState.Ended) {
             timerMonitorJob?.cancel()
             _state.value = TvState.Idle
@@ -531,6 +549,7 @@ class TvConnectionService : Service() {
                 when {
                     remaining <= 0L && current !is TvState.Ended -> {
                         _state.value = TvState.Ended(sessionId, customer)
+                        hideBranding()
                         showTimeUpOverlay(customer, persist = true)
                     }
                     remaining in 1..SESSION_WARNING_THRESHOLD_MS && current !is TvState.Warning -> {
@@ -547,6 +566,13 @@ class TvConnectionService : Service() {
     }
 
     private fun handleIncomingCommand(dataObj: JSONObject) {
+        // Branding payload: { payload: { action, text, subtitle, color, bg, position } }
+        val brandingPayload = dataObj.optJSONObject("payload")
+        if (brandingPayload != null) {
+            handleBranding(brandingPayload)
+            return
+        }
+
         val command = dataObj.optString("command")
         when (command) {
             "power_on" -> {
@@ -579,7 +605,8 @@ class TvConnectionService : Service() {
                 }
                 timerMonitorJob?.cancel()
                 _state.value = TvState.Ended(sessionId, customer)
-                // Screen off (black overlay over HDMI/app)
+                // Screen off (black overlay over HDMI/app) + hide branding
+                hideBranding()
                 showTimeUpOverlay(customer, persist = true)
                 sendAck(channel = tvChannel, command = command, success = true)
             }
@@ -620,6 +647,57 @@ class TvConnectionService : Service() {
         val escError = (error ?: "").replace("\"", "\\\"").take(200)
         val ack = """{"type":"TV_COMMAND_ACK","channel":"$channel","command":"$command","success":$success,"error":"$escError"}"""
         webSocket?.send(ack)
+    }
+
+    /** Handle the branding overlay payload from the operator app. */
+    private fun handleBranding(payload: JSONObject) {
+        val action = payload.optString("action", "set")
+        when (action) {
+            "hide" -> {
+                hideBranding()
+                sendAck(channel = tvChannel, command = "branding_hide", success = true)
+            }
+            else -> {
+                brandingText = payload.optString("text", brandingText)
+                brandingSubtitle = payload.optString("subtitle", brandingSubtitle)
+                brandingColor = payload.optString("color", brandingColor)
+                brandingBg = payload.optString("bg", brandingBg)
+                brandingPosition = payload.optString("position", brandingPosition)
+                timerPosition = payload.optString("timerPosition", timerPosition)
+                timerColor = payload.optString("timerColor", timerColor)
+                timerSize = payload.optInt("timerSize", timerSize)
+                val endTime = when (val st = _state.value) {
+                    is TvState.Active -> st.endTime
+                    is TvState.Warning -> st.endTime
+                    else -> null
+                }
+                if (endTime != null) {
+                    showBrandingWithTimer(endTime)
+                }
+                sendAck(channel = tvChannel, command = "branding_set", success = true)
+            }
+        }
+    }
+
+    /** Show the branding overlay + the synced countdown timer. */
+    private fun showBrandingWithTimer(endTime: Long) {
+        BrandingOverlayService.updateTimer(endTime, serverTimeOffsetMs)
+        BrandingOverlayService.show(
+            this,
+            brandingText,
+            brandingSubtitle,
+            brandingColor,
+            brandingBg,
+            brandingPosition,
+            timerPosition,
+            timerColor,
+            timerSize
+        )
+    }
+
+    private fun hideBranding() {
+        BrandingOverlayService.updateTimer(0L, serverTimeOffsetMs)
+        BrandingOverlayService.hide(this)
     }
 
     private fun showTimeUpOverlay(customer: String, persist: Boolean = false) {

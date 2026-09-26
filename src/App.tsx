@@ -708,6 +708,9 @@ export default function App() {
     bg: string;
     enabled: boolean;
     position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+    timerPosition: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+    timerColor: string;
+    timerSize: number;
   }>(() => {
     const saved = localStorage.getItem('cmdcenter_tv_branding');
     if (saved) {
@@ -715,6 +718,9 @@ export default function App() {
         const parsed = JSON.parse(saved);
         // Backward-compat: legacy saves have no `position`, default to bottom-right.
         if (!parsed.position) parsed.position = 'bottom-right';
+        if (!parsed.timerPosition) parsed.timerPosition = 'top-right';
+        if (!parsed.timerColor) parsed.timerColor = '#FFD700';
+        if (!parsed.timerSize) parsed.timerSize = 16;
         return parsed;
       } catch (e) {}
     }
@@ -725,6 +731,9 @@ export default function App() {
       bg: '#80000000',
       enabled: false,
       position: 'bottom-right',
+      timerPosition: 'top-right',
+      timerColor: '#FFD700',
+      timerSize: 16,
     };
   });
 
@@ -1105,6 +1114,9 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
       color: brandingConfig.color,
       bg: brandingConfig.bg,
       position: brandingConfig.position,
+      timerPosition: brandingConfig.timerPosition,
+      timerColor: brandingConfig.timerColor,
+      timerSize: brandingConfig.timerSize,
     };
     stations.forEach((st) => {
       const channel = stationChannelMap(st);

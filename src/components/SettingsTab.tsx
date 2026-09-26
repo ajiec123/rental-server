@@ -636,6 +636,77 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
             </div>
           </div>
 
+          {/* Timer Config */}
+          <div>
+            <label className="block text-[11px] font-bold text-slate-700 mb-1.5">
+              ⏱ Posisi Timer Sewa di TV
+            </label>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {POSITION_OPTIONS.map((opt) => {
+                const selected = brandingConfig.timerPosition === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => onUpdateBranding({ ...brandingConfig, timerPosition: opt.value })}
+                    className={`flex flex-col items-center justify-center gap-1 py-2.5 px-2 rounded-xl border-2 transition-all cursor-pointer ${
+                      selected
+                        ? 'border-amber-500 bg-amber-50 text-amber-900 ring-2 ring-amber-300/40'
+                        : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-amber-300 hover:bg-amber-50/50'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-lg">{opt.icon}</span>
+                    <span className="text-[10px] font-bold uppercase tracking-wider">{opt.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[11px] font-bold text-slate-700 mb-1.5">
+                Warna Timer
+              </label>
+              <div className="flex items-center gap-2 flex-wrap">
+                {['#FFD700', '#FF6B6B', '#6BCB77', '#A66CFF', '#FFFFFF', '#00E5FF'].map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => onUpdateBranding({ ...brandingConfig, timerColor: c })}
+                    className={`w-9 h-9 rounded-lg border-2 transition-all ${
+                      brandingConfig.timerColor === c
+                        ? 'border-slate-900 ring-2 ring-amber-300 scale-110'
+                        : 'border-slate-200 hover:scale-105'
+                    }`}
+                    style={{ backgroundColor: c }}
+                    title={c}
+                  />
+                ))}
+                <input
+                  type="color"
+                  value={brandingConfig.timerColor}
+                  onChange={(e) => onUpdateBranding({ ...brandingConfig, timerColor: e.target.value })}
+                  className="w-9 h-9 rounded-lg border border-slate-300 cursor-pointer"
+                />
+                <span className="text-[11px] font-mono text-slate-500 ml-1">{brandingConfig.timerColor}</span>
+              </div>
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-slate-700 mb-1.5">
+                Ukuran Timer (sp)
+              </label>
+              <input
+                type="number"
+                min={10}
+                max={48}
+                value={brandingConfig.timerSize}
+                onChange={(e) => onUpdateBranding({ ...brandingConfig, timerSize: Number(e.target.value) || 16 })}
+                className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm text-slate-800 font-medium focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
+              />
+            </div>
+          </div>
+
           {/* Broadcast actions */}
           <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-100">
             <button
