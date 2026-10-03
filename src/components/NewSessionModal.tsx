@@ -19,8 +19,13 @@ interface NewSessionModalProps {
     amount: number;
     gamePlaying: string;
     cashierName: string;
+    /** Loyalty points redeemed for this session (50 poin = 1 jam gratis). */
+    redeemedPoints?: number;
   }) => void;
 }
+
+/** Rate tukar poin loyalitas: 50 poin = 1 jam gratis. */
+const POINTS_PER_HOUR = 50;
 
 export const NewSessionModal: React.FC<NewSessionModalProps> = ({
   isOpen,
@@ -47,6 +52,8 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
   const [cashierName, setCashierName] = useState<string>('Alex Rivera');
   const [showQrCode, setShowQrCode] = useState<boolean>(false);
   const [showPaymentAlert, setShowPaymentAlert] = useState<boolean>(false);
+  /** Jumlah poin yang ditukar (0 = bayar normal). Mengubah total jadi Rp 0. */
+  const [redeemPoints, setRedeemPoints] = useState<number>(0);
 
   // Sync stationId with prop whenever it changes or modal opens. Without this,
   // selecting a station card → opening modal → the local state can stay pinned
@@ -66,15 +73,31 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
     // so users don't get stuck on a previous modal step.
     setShowPaymentAlert(false);
     setShowQrCode(false);
+    setRedeemPoints(0);
   }, [isOpen, selectedStationId, stations]);
+
+  // Reset redemption whenever the selected VIP / main-bebas toggles — a
+  // different member has a different balance, and Main Bebas never redeems.
+  useEffect(() => {
+    setRedeemPoints(0);
+    setShowQrCode(false);
+  }, [selectedVip?.id, isMainBebas]);
 
   if (!isOpen) return null;
 
   const currentStation = stations.find((s) => s.id === stationId) || stations[0];
   const ratePerHour = currentStation?.ratePerHour || 20000;
-  
+
+  // Poin yang bisa ditukar member ini (dibulatkan ke bawah per jam penuh).
+  const redeemableHours = selectedVip
+    ? Math.floor(selectedVip.loyaltyPoints / POINTS_PER_HOUR)
+    : 0;
+  const isRedeeming = redeemPoints > 0;
+
   // Calculate total amount per minute precision
   const totalAmount = isMainBebas
+    ? 0
+    : isRedeeming
     ? 0
     : Math.max(1, Math.round((ratePerHour / 60) * durationMinutes));
 
@@ -112,6 +135,12 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
+    // Sesi penukaran poin = gratis & langsung lunas (tanpa QRIS / alert).
+    if (isRedeeming) {
+      handleFinalizeSession('Lunas');
+      return;
+    }
+
     if (paymentMethod === 'QRIS' && !showQrCode && !isMainBebas) {
       setShowQrCode(true);
       return;
@@ -131,11 +160,12 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
       vipId: selectedVip?.id,
       durationMinutes: isMainBebas ? 0 : durationMinutes,
       isMainBebas,
-      paymentMethod,
-      paymentStatus: status,
+      paymentMethod: isRedeeming ? 'Poin Loyalitas' : paymentMethod,
+      paymentStatus: isRedeeming ? 'Lunas' : status,
       amount: totalAmount,
       gamePlaying: '',
       cashierName,
+      redeemedPoints: isRedeeming ? redeemPoints : 0,
     });
     setShowPaymentAlert(false);
     onClose();
@@ -405,7 +435,76 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
 
           </div>
 
-          {/* Duration Selector */}
+          {/* Loyalty Points Redemption — tampil hanya untuk member VIP dengan poin cukup */}
+          {selectedVip && !isMainBebas && (
+            <div className={`rounded-2xl border p-3 space-y-2 ${
+              isRedeeming
+                ? 'bg-amber-50 border-amber-300'
+                : redeemableHours > 0
+                ? 'bg-amber-50/60 border-amber-200'
+                : 'border-slate-200 bg-slate-50'
+            }`}>
+              <div className="flex justify-between items-center">
+                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-amber-500 text-base">stars</span>
+                  Poin Loyalitas
+                </span>
+                <span className="text-[11px] font-mono font-bold text-amber-800 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full">
+                  {selectedVip.loyaltyPoints} poin
+                </span>
+              </div>
+
+              {redeemableHours > 0 ? (
+                isRedeeming ? (
+                  <div className="flex justify-between items-center bg-white border border-amber-300 rounded-xl px-3 py-2">
+                    <div className="text-xs font-bold text-amber-900">
+                      🎁 Gratis {redeemPoints / POINTS_PER_HOUR} Jam
+                      <span className="block text-[10px] font-medium text-amber-700">
+                        Potong {redeemPoints} poin dari {selectedVip.name}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setRedeemPoints(0)}
+                      className="text-[10px] font-bold text-rose-600 hover:text-rose-800 border border-rose-200 rounded-lg px-2 py-1 cursor-pointer"
+                    >
+                      Batal — Bayar Normal
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="text-[10px] text-slate-600 font-medium">
+                      Tukar poin untuk sesi gratis? ({POINTS_PER_HOUR} poin = 1 jam):
+                    </div>
+                    <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
+                      {Array.from({ length: Math.min(redeemableHours, 4) }, (_, i) => i + 1).map((h) => (
+                        <button
+                          key={h}
+                          type="button"
+                          onClick={() => {
+                            setRedeemPoints(h * POINTS_PER_HOUR);
+                            setDurationMinutes(h * 60);
+                            setIsCustomDuration(false);
+                          }}
+                          className="py-1.5 px-1 rounded-lg text-[11px] font-bold border border-amber-300 bg-white text-amber-900 hover:bg-amber-100 transition-all cursor-pointer"
+                        >
+                          {h} Jam<br />
+                          <span className="text-[9px] font-mono text-amber-700">{h * POINTS_PER_HOUR} poin</span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )
+              ) : (
+                <div className="text-[10px] text-slate-500 font-medium">
+                  Butuh minimal {POINTS_PER_HOUR} poin untuk 1 jam gratis — kumpulkan 1 poin per Rp 1.000 belanja.
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Duration Selector — disembunyikan saat penukaran poin (durasi sudah ditentukan poin) */}
+          {!isRedeeming && (
           <div className="space-y-2.5">
             <div className="flex justify-between items-center">
               <label className="block font-label-ts text-xs text-slate-600 uppercase font-bold">
@@ -608,8 +707,20 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
               </div>
             )}
           </div>
+          )}
 
-          {/* Payment Method */}
+          {/* Payment Method — saat penukaran poin, metode otomatis "Poin Loyalitas" */}
+          {isRedeeming ? (
+            <div className="bg-amber-50 border border-amber-300 rounded-2xl p-3 flex justify-between items-center">
+              <span className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-base">loyalty</span>
+                Metode Pembayaran: Poin Loyalitas (gratis)
+              </span>
+              <span className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                Rp 0
+              </span>
+            </div>
+          ) : (
           <div>
             <label className="block font-label-ts text-xs text-slate-600 uppercase mb-1.5 font-bold">
               Metode Pembayaran {isMainBebas ? '(Pasca Bayar)' : ''}
@@ -637,6 +748,7 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
               ))}
             </div>
           </div>
+          )}
 
           {/* QRIS Display */}
           {paymentMethod === 'QRIS' && showQrCode && !isMainBebas && (
@@ -675,6 +787,20 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
                   (Jumlah Menit / 60) × Rp {ratePerHour.toLocaleString('id-ID')}
                 </strong>
               </p>
+            </div>
+          ) : isRedeeming ? (
+            <div className="bg-amber-50 border-2 border-amber-400 rounded-2xl p-3.5 flex justify-between items-center">
+              <div>
+                <span className="font-label-ts text-xs text-amber-800 font-bold block">
+                  TOTAL BAYAR (TUKAR {redeemPoints} POIN — {redeemPoints / POINTS_PER_HOUR} JAM)
+                </span>
+                <span className="text-xs text-amber-700 font-medium">
+                  Potom poin otomatis saat sesi dimulai
+                </span>
+              </div>
+              <div className="font-mono-code font-extrabold text-xl text-emerald-700">
+                GRATIS
+              </div>
             </div>
           ) : (
             <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 flex justify-between items-center">

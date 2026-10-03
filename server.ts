@@ -584,6 +584,18 @@ async function startServer() {
     res.json({ ok: true, vip, timestamp: Date.now() });
   });
 
+  // REST API: save full VIP list (loyalty points accrual/redemption, tier
+  // promotion). Sent by the operator app whenever a member's points change.
+  app.post('/api/vips/save', (req, res) => {
+    const { vips: incoming } = req.body || {};
+    if (!Array.isArray(incoming)) {
+      return res.status(400).json({ error: 'vips array required' });
+    }
+    vips = incoming;
+    saveVips(vips).catch((e) => console.error('[db] persist vips-save failed:', e));
+    res.json({ ok: true, count: vips.length, timestamp: Date.now() });
+  });
+
   // REST API: delete station
   app.post('/api/stations/delete', (req, res) => {
     const { stationId } = req.body || {};

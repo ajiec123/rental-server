@@ -1,6 +1,6 @@
 export type ConsoleType = string;
 
-export type PaymentMethod = 'QRIS' | 'Cash' | 'Debit' | 'E-Wallet';
+export type PaymentMethod = 'QRIS' | 'Cash' | 'Debit' | 'E-Wallet' | 'Poin Loyalitas';
 
 export type StationStatus = 'available' | 'occupied' | 'warning' | 'maintenance';
 

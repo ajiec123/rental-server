@@ -1163,6 +1163,7 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
     amount: number;
     gamePlaying: string;
     cashierName: string;
+    redeemedPoints?: number;
   }) => {
     const station = stations.find((s) => s.id === sessionData.stationId);
     if (!station) {
@@ -1175,6 +1176,29 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
         'warning'
       );
       return;
+    }
+
+    // ===== Loyalty points redemption (50 poin = 1 jam gratis) =====
+    // Deduct immediately at session start so the balance can't be spent twice.
+    if (sessionData.redeemedPoints && sessionData.redeemedPoints > 0 && sessionData.vipId) {
+      setVipList((prev) => {
+        const next = prev.map((v) =>
+          v.id === sessionData.vipId
+            ? { ...v, loyaltyPoints: Math.max(0, v.loyaltyPoints - sessionData.redeemedPoints!) }
+            : v
+        );
+        // Persist the deduction immediately (server → DB).
+        fetch('/api/vips/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ vips: next }),
+        }).catch((e) => console.warn('[vips] persist redemption failed:', e));
+        return next;
+      });
+      triggerActionToast(
+        `🎁 ${sessionData.customerName}: ${sessionData.redeemedPoints} poin ditukar — sesi ${sessionData.durationMinutes / 60} jam GRATIS`,
+        'success'
+      );
     }
 
     // ===== ANTI-FRAUD PRE-FLIGHT (start) =====
@@ -1267,7 +1291,9 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
     const durationLabel = `${durationHours} Jam`;
 
     const formattedAmount =
-      sessionData.amount >= 1000
+      sessionData.redeemedPoints && sessionData.redeemedPoints > 0
+        ? `GRATIS (${sessionData.redeemedPoints} poin)`
+        : sessionData.amount >= 1000
         ? `Rp ${Math.round(sessionData.amount / 1000)}k`
         : `Rp ${sessionData.amount}`;
 
@@ -1556,30 +1582,44 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
     }
 
     // ===== VIP loyalty accrual =====
+    // Earn rate: 1 poin per Rp 1.000 belanja (capped 500/sesi) — dikali
+    // multiplier tier (Gold x1.5, Platinum x2, Cyber Elite x2.5).
+    // Sesi tukar-poin (amount 0) tidak menghasilkan poin.
     if (session?.vipId) {
       const hoursPlayed = session.durationMinutes / 60;
-      // Reward: Rp 5.000 per Rp 100.000 spent = 5% in loyalty points (capped)
-      const earnedPoints = Math.min(500, Math.floor(session.amount / 1000));
-      setVipList((prev) =>
-        prev.map((v) => {
-          if (v.id !== session.vipId) return v;
-          const newTotalSpent = v.totalSpent + session.amount;
-          const newHours = v.playHoursTotal + hoursPlayed;
-          const newPoints = v.loyaltyPoints + earnedPoints;
-          // Auto-promote tier based on totalSpent
-          let newTier = v.tier;
-          if (newTotalSpent >= 5_000_000) newTier = 'Cyber Elite';
-          else if (newTotalSpent >= 2_000_000) newTier = 'Platinum';
-          else if (newTotalSpent >= 500_000) newTier = 'Gold';
-          return {
-            ...v,
-            totalSpent: newTotalSpent,
-            playHoursTotal: newHours,
-            loyaltyPoints: newPoints,
-            tier: newTier,
-          };
-        })
-      );
+      const baseEarned = Math.min(500, Math.floor(session.amount / 1000));
+      const updatedVips = vipList.map((v) => {
+        if (v.id !== session.vipId) return v;
+        const tierMultiplier =
+          v.tier === 'Cyber Elite' ? 2.5 :
+          v.tier === 'Platinum' ? 2 :
+          v.tier === 'Gold' ? 1.5 :
+          1;
+        const earnedPoints = Math.floor(baseEarned * tierMultiplier);
+        const newTotalSpent = v.totalSpent + session.amount;
+        const newHours = v.playHoursTotal + hoursPlayed;
+        const newPoints = v.loyaltyPoints + earnedPoints;
+        // Auto-promote tier based on totalSpent
+        let newTier = v.tier;
+        if (newTotalSpent >= 5_000_000) newTier = 'Cyber Elite';
+        else if (newTotalSpent >= 2_000_000) newTier = 'Platinum';
+        else if (newTotalSpent >= 500_000) newTier = 'Gold';
+        return {
+          ...v,
+          totalSpent: newTotalSpent,
+          playHoursTotal: newHours,
+          loyaltyPoints: newPoints,
+          tier: newTier,
+        };
+      });
+      setVipList(updatedVips);
+      // Persist accrual (points/hours/tier) to the server DB so it survives
+      // refresh — previously this was frontend-only and points were lost.
+      fetch('/api/vips/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vips: updatedVips }),
+      }).catch((e) => console.warn('[vips] persist accrual failed:', e));
     }
 
     // ===== Sync end-session to server (WS preferred, REST fallback) =====
