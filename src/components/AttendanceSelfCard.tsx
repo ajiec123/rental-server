@@ -186,7 +186,7 @@ export const AttendanceSelfCard: React.FC<AttendanceSelfCardProps> = ({
               Rp {profitShare.toLocaleString('id-ID')}
             </div>
             <div className="text-[10px] text-emerald-700 font-medium mt-0.5">
-              25% × Rp {revenueHandled.toLocaleString('id-ID')}
+              {Math.round(profitShareRate * 100)}% × Rp {revenueHandled.toLocaleString('id-ID')}
             </div>
           </div>
 

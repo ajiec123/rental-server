@@ -30,6 +30,12 @@ interface SettingsTabProps {
   onBroadcastBranding?: (action: 'show' | 'hide' | 'set') => void;
   tvAutoPower?: boolean;
   onUpdateTvAutoPower?: (enabled: boolean) => void;
+  /** Persentase bagi hasil gaji (0-1) dari server — Owner dapat mengubahnya. */
+  profitShareRate?: number;
+  onUpdateProfitShareRate?: (rate: number) => void;
+  /** Tunjangan makan per hari hadir (Rp) dari server — Owner dapat mengubahnya. */
+  mealAllowancePerDay?: number;
+  onUpdateMealAllowance?: (amount: number) => void;
 }
 
 export const SettingsTab: React.FC<SettingsTabProps> = ({
@@ -42,6 +48,10 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
   onBroadcastBranding,
   tvAutoPower,
   onUpdateTvAutoPower,
+  profitShareRate = 0.25,
+  onUpdateProfitShareRate,
+  mealAllowancePerDay = 10000,
+  onUpdateMealAllowance,
 }) => {
   const [localRates, setLocalRates] = useState<Record<string, number>>(rates);
   const [rateUnit, setRateUnit] = useState<'per_jam' | 'per_menit'>('per_jam');
@@ -52,6 +62,32 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [savedMsg, setSavedMsg] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
+
+  // Payroll form local state (persen sebagai angka "25" bukan "0.25")
+  const [payrollRatePct, setPayrollRatePct] = useState<number>(Math.round(profitShareRate * 100));
+  const [payrollMeal, setPayrollMeal] = useState<number>(mealAllowancePerDay);
+
+  // Sync jika settings server berubah
+  React.useEffect(() => {
+    setPayrollRatePct(Math.round(profitShareRate * 100));
+    setPayrollMeal(mealAllowancePerDay);
+  }, [profitShareRate, mealAllowancePerDay]);
+
+  const handleSavePayroll = () => {
+    const pct = Number(payrollRatePct);
+    const meal = Number(payrollMeal);
+    if (isNaN(pct) || pct < 0 || pct > 100) {
+      triggerFeedback('❌ Persentase harus antara 0 - 100');
+      return;
+    }
+    if (isNaN(meal) || meal < 0) {
+      triggerFeedback('❌ Uang makan tidak valid');
+      return;
+    }
+    onUpdateProfitShareRate?.(pct / 100);
+    onUpdateMealAllowance?.(meal);
+    triggerFeedback(`✓ Payroll disimpan: bagi hasil ${pct}% + uang makan Rp ${meal.toLocaleString('id-ID')}/hari`);
+  };
 
   // Sync props if changed externally
   React.useEffect(() => {
@@ -738,6 +774,60 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
           <p className="text-[10px] text-slate-500 italic">
             💡 Perubahan tersimpan otomatis di server. Show/Hide All akan broadcast ke semua station sekaligus.
           </p>
+        </div>
+      )}
+
+      {/* ===== Pengaturan Payroll (Bagi Hasil & Uang Makan) — Owner only ===== */}
+      {currentUser?.role === 'Owner' && (
+        <div className="bg-white border border-slate-200 p-5 rounded-3xl shadow-sm space-y-4">
+          <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
+            <span className="material-symbols-outlined text-lg text-emerald-700">savings</span>
+            Pengaturan Payroll Karyawan
+          </h3>
+          <p className="text-xs text-slate-500">
+            Mempengaruhi rekap gaji di tab Absensi &amp; Pengguna: total gaji = uang makan × hari hadir + (bagi hasil × pendapatan yang ditangani).
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                Persentase Bagi Hasil (%)
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={payrollRatePct}
+                  onChange={(e) => setPayrollRatePct(Number(e.target.value))}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm font-extrabold text-slate-900 font-mono focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
+                />
+                <span className="text-sm font-bold text-slate-600 shrink-0">%</span>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                Uang Makan per Hari Hadir (Rp)
+              </label>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold text-slate-600 shrink-0">Rp</span>
+                <input
+                  type="number"
+                  min={0}
+                  step={1000}
+                  value={payrollMeal}
+                  onChange={(e) => setPayrollMeal(Number(e.target.value))}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm font-extrabold text-slate-900 font-mono focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
+                />
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleSavePayroll}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold px-4 py-2 rounded-xl transition-colors shadow-sm active:scale-95 cursor-pointer"
+          >
+            💾 Simpan Pengaturan Payroll
+          </button>
         </div>
       )}
 

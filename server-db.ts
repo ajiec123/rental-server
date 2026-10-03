@@ -119,6 +119,10 @@ export interface DBSettings {
   address: string;
   soundEnabled: number;
   rates: Record<string, number>;
+  /** Persentase bagi hasil gaji karyawan (0.25 = 25%). Dikonfigurasi Owner. */
+  profitShareRate?: number;
+  /** Tunjangan makan per hari hadir (Rp). Dikonfigurasi Owner. */
+  mealAllowancePerDay?: number;
 }
 
 export interface DBState {

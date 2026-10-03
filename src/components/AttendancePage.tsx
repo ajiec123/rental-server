@@ -303,7 +303,7 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
                   <th className="p-3 text-right">Hari Hadir</th>
                   <th className="p-3 text-right">Pendapatan</th>
                   <th className="p-3 text-right">Uang Makan</th>
-                  <th className="p-3 text-right">Gaji (25%)</th>
+                  <th className="p-3 text-right">Gaji ({Math.round(profitShareRate * 100)}%)</th>
                   <th className="p-3 text-right">Total Gaji</th>
                 </tr>
               </thead>

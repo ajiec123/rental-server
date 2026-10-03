@@ -1233,6 +1233,24 @@ async function startServer() {
     res.send(buf);
   }));
 
+  // REST API: update payroll/business settings (profit share %, meal
+  // allowance). Owner-only via authGuard.
+  app.post('/api/settings/update', authGuard, asyncRoute(async (req, res) => {
+    const body = req.body || {};
+    if (typeof body.profitShareRate === 'number' && body.profitShareRate >= 0 && body.profitShareRate <= 1) {
+      settings = { ...settings, profitShareRate: body.profitShareRate } as DBSettings;
+    }
+    if (typeof body.mealAllowancePerDay === 'number' && body.mealAllowancePerDay >= 0) {
+      settings = { ...settings, mealAllowancePerDay: body.mealAllowancePerDay } as DBSettings;
+    }
+    if (typeof body.storeName === 'string' && body.storeName.trim()) {
+      settings = { ...settings, storeName: body.storeName.trim() } as DBSettings;
+    }
+    await saveSettings(settings).catch((e) => console.error('[db] persist settings-update failed:', e));
+    broadcast({ type: 'STATE_UPDATE', stations, transactions });
+    res.json({ ok: true, settings });
+  }));
+
   app.post('/api/branding', asyncRoute(async (req, res) => {
     const body = req.body || {};
     const cfg = await loadBranding();

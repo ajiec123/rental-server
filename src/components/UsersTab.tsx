@@ -486,7 +486,7 @@ export const UsersTab: React.FC<UsersTabProps> = ({
                       </span>
                     </div>
                     <div className="text-[10px] text-emerald-700 mt-1">
-                      25% × Rp {staff.revenueHandled.toLocaleString('id-ID')} revenue
+                      {Math.round(profitShareRate * 100)}% × Rp {staff.revenueHandled.toLocaleString('id-ID')} revenue
                     </div>
                   </div>
 

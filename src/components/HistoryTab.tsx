@@ -129,34 +129,46 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
     return matchesSearch && matchesMethod && matchesStatus && matchesDate;
   });
 
-  const totalFilteredRevenue = filtered.reduce((acc, curr) => acc + curr.amount, 0);
-
+  // ===== Export CSV (laporan pembukuan) =====
+  // Menghormati SEMUA filter aktif (search, metode, status, rentang tanggal)
+  // dan urutan tampilan, jadi operator tinggal filter lalu klik Export.
   const exportCsv = () => {
-    const headers = ['No Struk', 'Station', 'Konsol', 'Pelanggan', 'Durasi', 'Pembayaran', 'Jumlah (IDR)', 'Waktu Spesifik', 'Kasir'];
-    const rows = filtered.map((tx) => [
-      tx.receiptNumber,
-      tx.stationName,
-      tx.consoleType,
-      tx.customerName,
-      tx.durationLabel,
-      tx.paymentMethod,
-      tx.amount,
-      formatTransactionDateTime(tx),
-      tx.cashierName,
-    ]);
+    const esc = (val: string | number | undefined) => {
+      const s = String(val ?? '');
+      // Escape koma/quote/newline agar aman di Excel
+      return `"${s.replace(/"/g, '""')}"`;
+    };
+    const header = [
+      'No Struk', 'Tanggal', 'Jam', 'Station', 'Console', 'Pelanggan', 'Kasir',
+      'Durasi', 'Metode', 'Status', 'Total (Rp)',
+    ].join(';');
+    const rows = filtered.map((tx) => {
+      const dt = formatTransactionDateTime(tx);
+      const [time, date] = dt.includes(' ') ? dt.split(' ') : ['', dt];
+      return [
+        esc(tx.receiptNumber), esc(date), esc(time), esc(tx.stationName),
+        esc(tx.consoleType), esc(tx.customerName), esc(tx.cashierName),
+        esc(tx.durationLabel), esc(tx.paymentMethod), esc(tx.paymentStatus || 'Lunas'),
+        esc(tx.amount),
+      ].join(';');
+    });
+    const total = filtered.reduce((sum, tx) => sum + (tx.amount || 0), 0);
+    const footer = ['', '', '', '', '', '', '', '', '', 'TOTAL', total].join(';');
 
-    const csvContent =
-      'data:text/csv;charset=utf-8,' +
-      [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
-
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `Transactions_${Date.now()}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    // BOM UTF-8 supaya Excel membaca karakter dengan benar
+    const csv = '\uFEFF' + [header, ...rows, footer].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const rangeLabel =
+      startDate || endDate ? `${startDate || 'awal'}_sd_${endDate || 'akhir'}` : 'semua';
+    a.href = url;
+    a.download = `laporan-transaksi-${rangeLabel}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
+
+  const totalFilteredRevenue = filtered.reduce((acc, curr) => acc + curr.amount, 0);
 
   return (
     <div className="space-y-6">
@@ -354,6 +366,18 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
               Rp {totalFilteredRevenue.toLocaleString('id-ID')}
             </span>
           </div>
+
+          {filtered.length > 0 && (
+            <button
+              type="button"
+              onClick={exportCsv}
+              className="bg-cyan-50 hover:bg-cyan-100 text-cyan-800 border border-cyan-200 font-bold text-[11px] px-3 py-1.5 rounded-xl transition-colors cursor-pointer flex items-center gap-1 shrink-0"
+              title="Export transaksi hasil filter saat ini ke CSV (pembuka Excel)"
+            >
+              <span className="material-symbols-outlined text-sm">download</span>
+              Export CSV
+            </button>
+          )}
 
           {isOwner && filtered.length > 0 && (
             <button

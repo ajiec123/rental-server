@@ -713,6 +713,32 @@ export default function App() {
     claimedAt: number;
   }>>({});
 
+  // ===== Payroll/business settings dari server (Owner-configurable) =====
+  const [serverSettings, setServerSettings] = useState<{
+    profitShareRate: number;
+    mealAllowancePerDay: number;
+    storeName: string;
+  }>({
+    profitShareRate: 0.25,
+    mealAllowancePerDay: 10000,
+    storeName: 'COMMAND CENTER',
+  });
+
+  // Fetch settings sekali saat mount (persist di server DB).
+  useEffect(() => {
+    apiFetch('/api/state')
+      .then((r) => r.json())
+      .then((d) => {
+        const s = d.settings || {};
+        setServerSettings({
+          profitShareRate: typeof s.profitShareRate === 'number' ? s.profitShareRate : 0.25,
+          mealAllowancePerDay: typeof s.mealAllowancePerDay === 'number' ? s.mealAllowancePerDay : 10000,
+          storeName: s.storeName || 'COMMAND CENTER',
+        });
+      })
+      .catch((e) => console.warn('[settings] fetch failed:', e));
+  }, []);
+
   // Throttle warning "publish 0 penerima" per channel (hindari spam toast
   // saat broadcast branding ke banyak station yang TV-nya offline semua).
   const publishWarnRef = useRef<Record<string, number>>({});
@@ -2237,6 +2263,8 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
             attendanceMap={attendanceMap}
             staffStateMap={staffStateMap}
             employeeAccounts={employeeAccounts}
+            profitShareRate={serverSettings.profitShareRate}
+            mealAllowancePerDay={serverSettings.mealAllowancePerDay}
             onClockIn={handleClockIn}
             onClockOut={handleClockOut}
           />
@@ -2249,6 +2277,8 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
             vipList={vipList}
             employeeAccounts={employeeAccounts}
             attendanceMap={attendanceMap}
+            profitShareRate={serverSettings.profitShareRate}
+            mealAllowancePerDay={serverSettings.mealAllowancePerDay}
             onAddVip={handleAddVip}
             onUpdateVip={handleUpdateVip}
             onDeleteVip={handleDeleteVip}
@@ -2265,6 +2295,24 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
             rates={rates}
             currentUser={currentUser}
             onOpenPermissionManager={() => setIsPermissionManagerOpen(true)}
+            profitShareRate={serverSettings.profitShareRate}
+            onUpdateProfitShareRate={(rate) => {
+              setServerSettings((prev) => ({ ...prev, profitShareRate: rate }));
+              apiFetch('/api/settings/update', {
+                method: 'POST',
+                body: JSON.stringify({ profitShareRate: rate }),
+              }).then(() => triggerActionToast(`✓ Bagi hasil diatur ke ${Math.round(rate * 100)}%`, 'success'))
+                .catch(() => triggerActionToast('❌ Gagal menyimpan pengaturan payroll', 'warning'));
+            }}
+            mealAllowancePerDay={serverSettings.mealAllowancePerDay}
+            onUpdateMealAllowance={(amount) => {
+              setServerSettings((prev) => ({ ...prev, mealAllowancePerDay: amount }));
+              apiFetch('/api/settings/update', {
+                method: 'POST',
+                body: JSON.stringify({ mealAllowancePerDay: amount }),
+              }).then(() => triggerActionToast(`✓ Uang makan diatur ke Rp ${amount.toLocaleString('id-ID')}/hari`, 'success'))
+                .catch(() => triggerActionToast('❌ Gagal menyimpan pengaturan payroll', 'warning'));
+            }}
             onUpdateRates={(newRates) => {
               setRates(newRates);
               // Update stations default rates
