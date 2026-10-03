@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { apiFetch, clearApiCredentials } from './apiClient';
 import { useWebSocketTimer } from './hooks/useWebSocketTimer';
 import {
   TabType,
@@ -279,6 +280,23 @@ export default function App() {
     return INITIAL_USER_PERMISSIONS;
   });
 
+  // ===== Persistence helpers (dideklarasikan awal — dipakai banyak handler) =====
+  // Setiap perubahan akun/permission dipersist ke server (DB), bukan hanya
+  // localStorage — sebelumnya perubahan hilang saat dibuka dari browser lain.
+  const persistEmployees = (list: UserAccount[]) => {
+    apiFetch('/api/employees/save', {
+      method: 'POST',
+      body: JSON.stringify({ employees: list }),
+    }).catch((e) => console.warn('[employees] persist failed:', e));
+  };
+
+  const persistPermissions = (map: Record<string, RolePermissions>) => {
+    apiFetch('/api/permissions/save', {
+      method: 'POST',
+      body: JSON.stringify({ permissions: map }),
+    }).catch((e) => console.warn('[permissions] persist failed:', e));
+  };
+
   // ===== Daftar Staf (1-to-1 dengan akun Owner + karyawan) =====
   // Sumber otoritatifnya adalah employeeAccounts + DEFAULT_OWNER_ACCOUNT.
   // staffList adalah representasi turunan yang menambahkan state runtime
@@ -523,18 +541,53 @@ export default function App() {
   };
 
   const handleSaveUserPermissions = (userId: string, updatedPerms: RolePermissions) => {
-    setUserPermissionsMap((prev) => ({
-      ...prev,
-      [userId]: updatedPerms,
-    }));
+    setUserPermissionsMap((prev) => {
+      const next = {
+        ...prev,
+        [userId]: updatedPerms,
+      };
+      persistPermissions(next);
+      return next;
+    });
+  };
+
+  const handleUpdateEmployeeAccount = (id: string, updates: Partial<UserAccount>) => {
+    setEmployeeAccounts((prev) => {
+      const next = prev.map((acc) => (acc.id === id ? { ...acc, ...updates } : acc));
+      persistEmployees(next);
+      return next;
+    });
+  };
+
+  const handleDeleteEmployeeAccount = (id: string) => {
+    setEmployeeAccounts((prev) => {
+      const next = prev.filter((acc) => acc.id !== id);
+      persistEmployees(next);
+      return next;
+    });
+    // Bersihkan permission map untuk akun yang dihapus
+    setUserPermissionsMap((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      persistPermissions(next);
+      return next;
+    });
   };
 
   const handleAddEmployeeAccount = (newAcc: UserAccount) => {
-    setEmployeeAccounts((prev) => [...prev, newAcc]);
-    setUserPermissionsMap((prev) => ({
-      ...prev,
-      [newAcc.id]: DEFAULT_CASHIER_PERMISSIONS,
-    }));
+    setEmployeeAccounts((prev) => {
+      const next = [...prev, newAcc];
+      persistEmployees(next);
+      return next;
+    });
+    setUserPermissionsMap((prev) => {
+      const next = {
+        ...prev,
+        [newAcc.id]: DEFAULT_CASHIER_PERMISSIONS,
+      };
+      persistPermissions(next);
+      return next;
+    });
     // Auto-create entry StaffUser (1-to-1 dengan akun).
     // Hanya karyawan yang di-track; Owner sudah punya entry statis.
     if (newAcc.role === 'Karyawan') {
@@ -553,6 +606,7 @@ export default function App() {
   // Dipakai oleh tombol Logout di Header.
   const handleLogout = () => {
     localStorage.removeItem('cmdcenter_current_user');
+    clearApiCredentials();
     setIsAuthenticated(false);
     setIsLoginModalOpen(false);
   };
@@ -666,7 +720,7 @@ export default function App() {
   // Ambil klaim channel yang sudah ada saat mount (update selanjutnya datang
   // via broadcast TV_PAIR_UPDATE setiap kali TV boot / pair).
   useEffect(() => {
-    fetch('/api/tv/pair')
+    apiFetch('/api/tv/pair')
       .then((r) => r.json())
       .then((d) => { if (d?.claims) setTvClaims(d.claims); })
       .catch(() => {});
@@ -740,7 +794,7 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('cmdcenter_tv_branding', JSON.stringify(brandingConfig));
     // Also persist the rental name to the server so the TV screensaver can show it.
-    fetch('/api/branding', {
+    apiFetch('/api/branding', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ rentalName: brandingConfig.text }),
@@ -904,7 +958,7 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
     const published = wsRef.current?.publishToChannel?.(channel, { command });
     if (!published) {
       // Fallback: REST publish endpoint
-      fetch('/api/channel/publish', {
+      apiFetch('/api/channel/publish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ channel, data: { command } }),
@@ -937,7 +991,7 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
     const channel = stationChannelMap(station);
     const published = wsRef.current?.publishToChannel?.(channel, { command });
     if (!published) {
-      fetch('/api/channel/publish', {
+      apiFetch('/api/channel/publish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ channel, data: { command } }),
@@ -1067,7 +1121,7 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
     // Publish RECONNECT_TV to channel (WS preferred, REST fallback).
     const published = wsRef.current?.publishToChannel?.(channel, { command: 'RECONNECT_TV' });
     if (!published) {
-      fetch('/api/channel/publish', {
+      apiFetch('/api/channel/publish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ channel, data: { command: 'RECONNECT_TV' } }),
@@ -1094,7 +1148,7 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
 
     const published = wsRef.current?.publishToChannel?.(channel, { payload });
     if (!published) {
-      fetch('/api/channel/publish', {
+      apiFetch('/api/channel/publish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ channel, data: { payload } }),
@@ -1188,7 +1242,7 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
             : v
         );
         // Persist the deduction immediately (server → DB).
-        fetch('/api/vips/save', {
+        apiFetch('/api/vips/save', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ vips: next }),
@@ -1271,7 +1325,7 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
         transaction: placeholderTx,
       }) || false;
       if (!wsSent) {
-        fetch('/api/sessions/start', {
+        apiFetch('/api/sessions/start', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1389,7 +1443,7 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
       transaction: newTx,
     }) || false;
     if (!wsSent) {
-      fetch('/api/sessions/start', {
+      apiFetch('/api/sessions/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1615,7 +1669,7 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
       setVipList(updatedVips);
       // Persist accrual (points/hours/tier) to the server DB so it survives
       // refresh — previously this was frontend-only and points were lost.
-      fetch('/api/vips/save', {
+      apiFetch('/api/vips/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ vips: updatedVips }),
@@ -1747,7 +1801,7 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
     const wsSent = wsRef.current?.sendMoveSessionViaWS?.(sourceStationId, targetStationId) || false;
     if (!wsSent) {
       // Fallback to REST if WS not connected
-      fetch('/api/stations/move-session', {
+      apiFetch('/api/stations/move-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sourceStationId, targetStationId }),
@@ -1808,7 +1862,7 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
     // Sync VIP add to server (WS preferred, REST fallback)
     const wsSent = wsRef.current?.sendAddVipViaWS?.(newVip) || false;
     if (!wsSent) {
-      fetch('/api/vips/add', {
+      apiFetch('/api/vips/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newVip),
@@ -1820,28 +1874,25 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
     setVipList((prev) =>
       prev.map((v) => (v.id === id ? { ...v, ...updates } : v))
     );
+    apiFetch('/api/vips/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, updates }),
+    }).catch((e) => console.warn('[vips] update failed:', e));
   };
 
   const handleDeleteVip = (id: string) => {
     setVipList((prev) => prev.filter((v) => v.id !== id));
+    apiFetch('/api/vips/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    }).catch((e) => console.warn('[vips] delete failed:', e));
   };
 
-  // ===== CRUD Akun Karyawan (hanya Owner yang punya akses dari UI) =====
-  const handleUpdateEmployeeAccount = (id: string, updates: Partial<UserAccount>) => {
-    setEmployeeAccounts((prev) =>
-      prev.map((acc) => (acc.id === id ? { ...acc, ...updates } : acc))
-    );
-  };
-
-  const handleDeleteEmployeeAccount = (id: string) => {
-    setEmployeeAccounts((prev) => prev.filter((acc) => acc.id !== id));
-    // Bersihkan permission map untuk akun yang dihapus
-    setUserPermissionsMap((prev) => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-  };
+  // ===== CRUD Akun Karyawan =====
+  // persistEmployees / persistPermissions dideklarasikan di atas (line ~280).
+  // handleAddEmployeeAccount ada di atas (meng-handle staff state juga).
 
   // ===== Update profil sendiri (semua user: Owner & Karyawan) =====
   // Field yang bisa diubah: name, email, pin (sudah di-hash oleh ProfileSettingsModal).
@@ -1888,7 +1939,7 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
       setStations((prev) => prev.map((s) => (s.id === stationData.id ? updated : s)));
       const wsSent = wsRef.current?.sendUpdateStationViaWS?.(updated) || false;
       if (!wsSent) {
-        fetch('/api/stations/update', {
+        apiFetch('/api/stations/update', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ station: updated }),
@@ -1910,7 +1961,7 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
       setStations((prev) => [...prev, newStation]);
       const wsSent = wsRef.current?.sendAddStationViaWS?.(newStation) || false;
       if (!wsSent) {
-        fetch('/api/stations/add', {
+        apiFetch('/api/stations/add', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ station: newStation }),
@@ -1925,7 +1976,7 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
     // Sync station delete to server
     const wsSent = wsRef.current?.sendDeleteStationViaWS?.(stationId) || false;
     if (!wsSent) {
-      fetch('/api/stations/delete', {
+      apiFetch('/api/stations/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ stationId }),
@@ -1950,7 +2001,7 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
     // Sync toggle payment to server
     const wsSent = wsRef.current?.sendTogglePaymentViaWS?.(txId) || false;
     if (!wsSent) {
-      fetch('/api/transactions/toggle-payment', {
+      apiFetch('/api/transactions/toggle-payment', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ transactionId: txId }),
@@ -1964,7 +2015,7 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
     // Sync delete transaction to server
     const wsSent = wsRef.current?.sendDeleteTransactionsViaWS?.([txId]) || false;
     if (!wsSent) {
-      fetch('/api/transactions/delete', {
+      apiFetch('/api/transactions/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ transactionIds: [txId] }),
@@ -1978,7 +2029,7 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
     // Sync multi-delete to server
     const wsSent = wsRef.current?.sendDeleteTransactionsViaWS?.(txIds) || false;
     if (!wsSent) {
-      fetch('/api/transactions/delete', {
+      apiFetch('/api/transactions/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ transactionIds: txIds }),
@@ -2294,7 +2345,7 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
             ? tvPairings.map((p) => p.stationId === pairing.stationId ? pairing : p)
             : [...tvPairings, pairing];
           setTvPairings(next);
-          fetch('/api/tv/pairings', {
+          apiFetch('/api/tv/pairings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ pairings: next }),

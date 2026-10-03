@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { UserAccount } from '../types';
 import { verifyPin } from '../utils/pinCrypto';
+import { setApiCredentials, clearApiCredentials } from '../apiClient';
 import { Avatar } from './Avatar';
 
 interface LoginModalProps {
@@ -89,6 +90,9 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
     const ok = await verifyPin(pin, matched.pin || '');
     if (ok) {
+      // Feed the API client the same credentials so it can authenticate
+      // against the server's protected endpoints (Bearer token flow).
+      setApiCredentials(matched.username || u, matched.pin || '');
       onLogin(matched);
       setPin('');
       setErrorMsg('');

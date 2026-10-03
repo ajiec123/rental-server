@@ -4,6 +4,7 @@ import path from 'node:path';
 import dgram from 'node:dgram';
 import os from 'node:os';
 import fs from 'node:fs/promises';
+import crypto from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 
 // ===== CRASH GUARD =====
@@ -325,7 +326,7 @@ async function startServer() {
   }
 
   // REST API: trigger TV command via HTTP (alternative to WebSocket)
-  app.post('/api/tv-control', async (req, res) => {
+  app.post('/api/tv-control', authGuard, async (req, res) => {
     const { stationId, command } = req.body || {};
     if (!stationId || !command) {
       return res.status(400).json({ error: 'stationId and command are required' });
@@ -342,7 +343,7 @@ async function startServer() {
   });
 
   // REST API: branding overlay (nama rental di pojok TV)
-  app.post('/api/tv-branding', async (req, res) => {
+  app.post('/api/tv-branding', authGuard, async (req, res) => {
     const { stationId, payload } = req.body || {};
     if (!stationId || !payload || !payload.action) {
       return res.status(400).json({ error: 'stationId and payload.action are required' });
@@ -360,7 +361,7 @@ async function startServer() {
 
   // REST API: publish to a channel (operator → TV)
   // Body: { channel: "tv:PS5_01", data: { command: "power_on" } }
-  app.post('/api/channel/publish', (req, res) => {
+  app.post('/api/channel/publish', authGuard, (req, res) => {
     const { channel, data } = req.body || {};
     if (!channel || !data) {
       return res.status(400).json({ error: 'channel and data are required' });
@@ -371,7 +372,7 @@ async function startServer() {
 
   // REST API: move session (operator → server, persisted + broadcast)
   // Body: { sourceStationId: "st-01", targetStationId: "st-03" }
-  app.post('/api/stations/move-session', (req, res) => {
+  app.post('/api/stations/move-session', authGuard, (req, res) => {
     const { sourceStationId, targetStationId } = req.body || {};
     if (!sourceStationId || !targetStationId) {
       return res.status(400).json({ error: 'sourceStationId and targetStationId are required' });
@@ -434,7 +435,7 @@ async function startServer() {
   });
 
   // REST API: start session (fallback for WS)
-  app.post('/api/sessions/start', (req, res) => {
+  app.post('/api/sessions/start', authGuard, (req, res) => {
     const { stationId, session, transaction } = req.body || {};
     if (!stationId || !session || !transaction) {
       return res.status(400).json({ error: 'stationId, session, and transaction are required' });
@@ -465,7 +466,7 @@ async function startServer() {
   });
 
   // REST API: end Main Bebas session
-  app.post('/api/sessions/end-main-bebas', (req, res) => {
+  app.post('/api/sessions/end-main-bebas', authGuard, (req, res) => {
     const { stationId, actualMinutes, finalAmount, paymentMethod, paymentStatus } = req.body || {};
     if (!stationId || finalAmount === undefined) {
       return res.status(400).json({ error: 'stationId and finalAmount are required' });
@@ -520,7 +521,7 @@ async function startServer() {
   });
 
   // REST API: end Fixed session (just update tx payment status)
-  app.post('/api/sessions/end-fixed', (req, res) => {
+  app.post('/api/sessions/end-fixed', authGuard, (req, res) => {
     const { stationId, paymentMethod, paymentStatus } = req.body || {};
     if (!stationId) return res.status(400).json({ error: 'stationId required' });
     const station = stations.find((s) => s.id === stationId);
@@ -542,7 +543,7 @@ async function startServer() {
   });
 
   // REST API: toggle payment status
-  app.post('/api/transactions/toggle-payment', (req, res) => {
+  app.post('/api/transactions/toggle-payment', authGuard, (req, res) => {
     const { transactionId } = req.body || {};
     if (!transactionId) return res.status(400).json({ error: 'transactionId required' });
     transactions = transactions.map((tx) => {
@@ -559,7 +560,7 @@ async function startServer() {
   });
 
   // REST API: delete transactions
-  app.post('/api/transactions/delete', (req, res) => {
+  app.post('/api/transactions/delete', authGuard, (req, res) => {
     const { transactionIds } = req.body || {};
     if (!Array.isArray(transactionIds)) {
       return res.status(400).json({ error: 'transactionIds array required' });
@@ -573,7 +574,7 @@ async function startServer() {
   });
 
   // REST API: add VIP
-  app.post('/api/vips/add', (req, res) => {
+  app.post('/api/vips/add', authGuard, (req, res) => {
     const vip = req.body as DBVipMember;
     if (!vip || !vip.id || !vip.name) {
       return res.status(400).json({ error: 'id and name required' });
@@ -586,7 +587,7 @@ async function startServer() {
 
   // REST API: save full VIP list (loyalty points accrual/redemption, tier
   // promotion). Sent by the operator app whenever a member's points change.
-  app.post('/api/vips/save', (req, res) => {
+  app.post('/api/vips/save', authGuard, (req, res) => {
     const { vips: incoming } = req.body || {};
     if (!Array.isArray(incoming)) {
       return res.status(400).json({ error: 'vips array required' });
@@ -596,8 +597,144 @@ async function startServer() {
     res.json({ ok: true, count: vips.length, timestamp: Date.now() });
   });
 
+  // REST API: update a single VIP member (edit name/phone/tier/points).
+  app.post('/api/vips/update', authGuard, (req, res) => {
+    const { id, updates } = req.body || {};
+    if (!id || typeof updates !== 'object' || updates === null) {
+      return res.status(400).json({ error: 'id and updates object required' });
+    }
+    let updated = false;
+    vips = vips.map((v) => {
+      if (v.id !== id) return v;
+      updated = true;
+      return { ...v, ...updates, id: v.id }; // id immutable
+    });
+    if (!updated) return res.status(404).json({ error: 'vip not found' });
+    saveVips(vips).catch((e) => console.error('[db] persist vips-update failed:', e));
+    res.json({ ok: true, timestamp: Date.now() });
+  });
+
+  // REST API: delete a VIP member by id.
+  app.post('/api/vips/delete', authGuard, (req, res) => {
+    const { id } = req.body || {};
+    if (!id) return res.status(400).json({ error: 'id required' });
+    const before = vips.length;
+    vips = vips.filter((v) => v.id !== id);
+    if (vips.length === before) return res.status(404).json({ error: 'vip not found' });
+    saveVips(vips).catch((e) => console.error('[db] persist vips-delete failed:', e));
+    res.json({ ok: true, timestamp: Date.now() });
+  });
+
+  // REST API: save full employee list (add/edit/delete akun karyawan).
+  // Frontend mengirim UserAccount[] (dengan pin sudah ter-hash SHA-256).
+  app.post('/api/employees/save', authGuard, (req, res) => {
+    const { employees: incoming } = req.body || {};
+    if (!Array.isArray(incoming)) {
+      return res.status(400).json({ error: 'employees array required' });
+    }
+    employees = incoming.map((e: DBEmployee) => ({
+      id: e.id,
+      name: e.name,
+      role: e.role,
+      avatarUrl: e.avatarUrl ?? '',
+      email: e.email ?? '',
+      pin: e.pin,
+      createdAt: e.createdAt ?? Date.now(),
+    }));
+    saveEmployees(employees).catch((e) => console.error('[db] persist employees-save failed:', e));
+    res.json({ ok: true, count: employees.length, timestamp: Date.now() });
+  });
+
+  // REST API: save full permission map (userId → per-feature permissions).
+  app.post('/api/permissions/save', authGuard, (req, res) => {
+    const { permissions: incoming } = req.body || {};
+    if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+      return res.status(400).json({ error: 'permissions object required' });
+    }
+    userPermissions = Object.entries(incoming).map(([userId, perms]) => {
+      const p = perms as DBUserPermission;
+      return {
+        userId,
+        dashboard: p.dashboard ?? 0,
+        units: p.units ?? 0,
+        history: p.history ?? 0,
+        users: p.users ?? 0,
+        settings: p.settings ?? 0,
+        new_session: p.new_session ?? 0,
+      };
+    });
+    savePermissions(userPermissions).catch((e) => console.error('[db] persist permissions-save failed:', e));
+    res.json({ ok: true, count: userPermissions.length, timestamp: Date.now() });
+  });
+
+  // ===== Auth API =====
+  // Operator app sends { username, pinHash } (pin already SHA-256 hashed in
+  // the browser via pinCrypto.ts). On success, issues a session token that
+  // must be echoed as "Authorization: Bearer <token>" on protected calls.
+  // Tokens live in memory (restart = re-login, acceptable for a LAN rental).
+  interface AuthSession { token: string; username: string; role: string; createdAt: number; }
+  const authSessions = new Map<string, AuthSession>();
+  const TOKEN_TTL_MS = 12 * 60 * 60 * 1000; // 12h shift
+
+  function cleanupAuthSessions() {
+    const now = Date.now();
+    for (const [tok, sess] of authSessions.entries()) {
+      if (now - sess.createdAt > TOKEN_TTL_MS) authSessions.delete(tok);
+    }
+  }
+
+  app.post('/api/auth/login', asyncRoute(async (req, res) => {
+    const { username, pinHash } = req.body || {};
+    if (!username || !pinHash) {
+      return res.status(400).json({ error: 'username and pinHash required' });
+    }
+    // Owner check: fixed built-in account (hash of PIN 681232).
+    const OWNER_PIN_HASH = 'sha256:97fa8839f2a57048b7a3efafeb665c503cb34ba00b72ee1331f7fcafc943fe0f';
+    const isOwner = username === 'owner-rental' && pinHash === OWNER_PIN_HASH;
+    // Employee check: match against the server-side employee list by email
+    // (frontend usernames map 1:1 to emails like "rian@cmdcenter.app").
+    const emp = employees.find(
+      (e) => (e.email || '').startsWith(`${username}@`) && e.pin === pinHash
+    );
+    if (!isOwner && !emp) {
+      return res.status(401).json({ error: 'Username atau PIN salah' });
+    }
+    const role = isOwner ? 'Owner' : 'Karyawan';
+    const token = crypto.randomBytes(32).toString('hex');
+    authSessions.set(token, { token, username, role, createdAt: Date.now() });
+    res.json({ ok: true, token, username, role, expiresInMs: TOKEN_TTL_MS });
+  }));
+
+  app.post('/api/auth/logout', (req, res) => {
+    const auth = req.headers.authorization;
+    if (auth?.startsWith('Bearer ')) {
+      authSessions.delete(auth.slice(7));
+    }
+    res.json({ ok: true });
+  });
+
+  /**
+   * Guard: require a valid Bearer token. Attach with
+   * app.post(path, authGuard, handler) on endpoints that mutate state or
+   * expose data. Public endpoints (health, auth, GET state) stay open so the
+   * TV receivers keep working without changes.
+   */
+  function authGuard(req: express.Request, res: express.Response, next: express.NextFunction) {
+    const auth = req.headers.authorization;
+    if (!auth?.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Auth required' });
+    }
+    cleanupAuthSessions();
+    const sess = authSessions.get(auth.slice(7));
+    if (!sess) {
+      return res.status(401).json({ error: 'Sesi berakhir — silakan login ulang' });
+    }
+    (req as any).auth = sess;
+    next();
+  }
+
   // REST API: delete station
-  app.post('/api/stations/delete', (req, res) => {
+  app.post('/api/stations/delete', authGuard, (req, res) => {
     const { stationId } = req.body || {};
     if (!stationId) return res.status(400).json({ error: 'stationId required' });
     stations = stations.filter((st) => st.id !== stationId);
@@ -609,7 +746,7 @@ async function startServer() {
   });
 
   // REST API: add station (fallback for WS)
-  app.post('/api/stations/add', (req, res) => {
+  app.post('/api/stations/add', authGuard, (req, res) => {
     const { station } = req.body || {};
     if (!station || !station.id || !station.name) {
       return res.status(400).json({ error: 'station with id and name required' });
@@ -631,7 +768,7 @@ async function startServer() {
   });
 
   // REST API: update station (fallback for WS)
-  app.post('/api/stations/update', (req, res) => {
+  app.post('/api/stations/update', authGuard, (req, res) => {
     const { station } = req.body || {};
     if (!station || !station.id) {
       return res.status(400).json({ error: 'station with id required' });
@@ -651,7 +788,7 @@ async function startServer() {
 
   // REST API: clear ALL stations (owner-only debug/test). Used for resetting
   // demo data without nuking the whole DB. Owner console → POST /api/stations/clear
-  app.post('/api/stations/clear', (req, res) => {
+  app.post('/api/stations/clear', authGuard, (req, res) => {
     const removed = stations.length;
     stations = [];
     broadcast({
@@ -852,7 +989,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/admin/restore', async (req, res) => {
+  app.post('/api/admin/restore', authGuard, async (req, res) => {
     try {
       const reset = req.query.reset === '1' || req.query.reset === 'true';
       const body = req.body as { meta?: unknown; data?: DBState } | DBState;

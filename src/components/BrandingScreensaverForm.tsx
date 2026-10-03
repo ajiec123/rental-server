@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { apiFetch } from '../apiClient';
 
 /**
  * Screensaver wallpaper form: upload the rental's screensaver image shown on
@@ -14,7 +15,7 @@ export const BrandingScreensaverForm: React.FC = () => {
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch('/api/branding')
+    apiFetch('/api/branding')
       .then((r) => r.json())
       .then((d) => {
         setHasWallpaper(!!d.hasWallpaper);
@@ -34,7 +35,7 @@ export const BrandingScreensaverForm: React.FC = () => {
     setSaving(true);
     setMessage(null);
     try {
-      const res = await fetch('/api/branding', {
+      const res = await apiFetch('/api/branding', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ wallpaper }),
