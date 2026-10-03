@@ -143,8 +143,8 @@ export const EndSessionModal: React.FC<EndSessionModalProps> = ({
           <label className="block text-xs font-bold text-slate-600 uppercase mb-1.5">
             Metode Pembayaran Final
           </label>
-          <div className="grid grid-cols-3 gap-2">
-            {(['Cash', 'QRIS', 'Debit'] as PaymentMethod[]).map((pm) => (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {(['Cash', 'QRIS', 'Debit', 'E-Wallet'] as PaymentMethod[]).map((pm) => (
               <button
                 type="button"
                 key={pm}
@@ -156,7 +156,7 @@ export const EndSessionModal: React.FC<EndSessionModalProps> = ({
                 }`}
               >
                 <span className="material-symbols-outlined text-sm">
-                  {pm === 'QRIS' ? 'qr_code' : pm === 'Cash' ? 'payments' : 'credit_card'}
+                  {pm === 'QRIS' ? 'qr_code' : pm === 'Cash' ? 'payments' : pm === 'Debit' ? 'credit_card' : 'account_balance_wallet'}
                 </span>
                 {pm}
               </button>

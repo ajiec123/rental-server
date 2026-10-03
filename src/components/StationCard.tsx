@@ -30,6 +30,8 @@ export const StationCard: React.FC<StationCardProps> = ({
   const [percentRemaining, setPercentRemaining] = useState<number>(0);
   const [estCost, setEstCost] = useState<number>(0);
   const [hasFiredExpired, setHasFiredExpired] = useState<boolean>(false);
+  // 2-step delete confirmation: klik pertama = "yakin?", klik kedua = eksekusi.
+  const [confirmingDelete, setConfirmingDelete] = useState<boolean>(false);
 
   const isMainBebas = station.currentSession?.isMainBebas || station.currentSession?.durationMinutes === 0;
 
@@ -180,12 +182,25 @@ export const StationCard: React.FC<StationCardProps> = ({
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      onDeleteStation(station.id);
+                      if (confirmingDelete) {
+                        onDeleteStation(station.id);
+                        setConfirmingDelete(false);
+                      } else {
+                        setConfirmingDelete(true);
+                        // Auto-reset biar tidak "nyangkut" di mode konfirmasi
+                        setTimeout(() => setConfirmingDelete(false), 3000);
+                      }
                     }}
-                    title="Hapus Station Unit"
-                    className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                    title={confirmingDelete ? 'Klik LAGI untuk konfirmasi hapus!' : 'Hapus Station Unit'}
+                    className={`p-1 rounded-lg transition-colors cursor-pointer ${
+                      confirmingDelete
+                        ? 'bg-rose-600 text-white animate-pulse'
+                        : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
+                    }`}
                   >
-                    <span className="material-symbols-outlined text-base">delete</span>
+                    <span className="material-symbols-outlined text-base">
+                      {confirmingDelete ? 'warning' : 'delete'}
+                    </span>
                   </button>
                 )}
               </div>

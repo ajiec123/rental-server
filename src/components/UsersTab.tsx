@@ -95,6 +95,10 @@ export const UsersTab: React.FC<UsersTabProps> = ({
   const [deletingVip, setDeletingVip] = useState<VIPMember | null>(null);
   const [vipForm, setVipForm] = useState<VipFormData>(DEFAULT_VIP_FORM);
 
+  // ===== Top-up poin tunai (1 poin = Rp 1.000) =====
+  const [topupVip, setTopupVip] = useState<VIPMember | null>(null);
+  const [topupAmount, setTopupAmount] = useState<number>(50);
+
   // ===== Employee Modal state (Owner only) =====
   const [showAddEmpModal, setShowAddEmpModal] = useState(false);
   const [editingEmp, setEditingEmp] = useState<UserAccount | null>(null);
@@ -146,6 +150,15 @@ export const UsersTab: React.FC<UsersTabProps> = ({
     if (!deletingVip) return;
     onDeleteVip(deletingVip.id);
     setDeletingVip(null);
+  };
+
+  // ===== Top-up poin tunai: bayar Rp N.000 → tambah N poin =====
+  const confirmTopup = () => {
+    if (!topupVip || topupAmount <= 0) return;
+    const updated = { ...topupVip, loyaltyPoints: topupVip.loyaltyPoints + topupAmount };
+    // onUpdateVip memicu persist ke server (via /api/vips/update di App.tsx)
+    onUpdateVip(topupVip.id, { loyaltyPoints: updated.loyaltyPoints });
+    setTopupVip(null);
   };
 
   // ===== Handlers Employee (Owner only) =====
@@ -600,6 +613,15 @@ export const UsersTab: React.FC<UsersTabProps> = ({
                     <td className="p-4 text-right">
                       <div className="inline-flex gap-1">
                         <button
+                          onClick={() => setTopupVip(vip)}
+                          title="Top-up poin tunai (1 poin = Rp 1.000)"
+                          className="text-amber-600 hover:text-amber-800 hover:bg-amber-50 p-2 rounded-lg transition-all cursor-pointer"
+                        >
+                          <span className="material-symbols-outlined text-lg">
+                            add_circle
+                          </span>
+                        </button>
+                        <button
                           onClick={() => openEditVip(vip)}
                           title="Edit VIP"
                           className="text-slate-500 hover:text-cyan-700 hover:bg-cyan-50 p-2 rounded-lg transition-all cursor-pointer"
@@ -856,6 +878,65 @@ export const UsersTab: React.FC<UsersTabProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ===== MODAL: Top-up Poin Tunai ===== */}
+      {topupVip && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 w-full max-w-sm space-y-4 shadow-2xl">
+            <h3 className="font-bold text-lg text-slate-900 flex items-center gap-2">
+              <span className="material-symbols-outlined text-amber-500">add_circle</span>
+              Top-up Poin
+            </h3>
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm">
+              <span className="font-bold text-amber-900">{topupVip.name}</span>
+              <span className="ml-2 font-mono text-amber-700">{topupVip.loyaltyPoints} poin</span>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-600 uppercase mb-1.5">
+                Jumlah Pembayaran Tunai (Rp 1.000 = 1 poin)
+              </label>
+              <input
+                type="number"
+                min={1000}
+                step={1000}
+                value={topupAmount * 1000}
+                onChange={(e) => setTopupAmount(Math.floor((Number(e.target.value) || 0) / 1000))}
+                className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm font-extrabold text-slate-900 font-mono focus:outline-none focus:border-amber-500"
+              />
+              <div className="flex gap-1.5 mt-2">
+                {[10, 20, 50, 100].map((k) => (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => setTopupAmount(k)}
+                    className="flex-1 py-1.5 rounded-lg text-[11px] font-bold border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 cursor-pointer transition-all"
+                  >
+                    {k}k
+                  </button>
+                ))}
+              </div>
+              <div className="text-center text-sm font-extrabold text-amber-800 bg-amber-100 border border-amber-300 rounded-xl py-2 mt-2">
+                + {topupAmount} poin
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setTopupVip(null)}
+                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2.5 rounded-xl text-sm cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                onClick={confirmTopup}
+                disabled={topupAmount <= 0}
+                className="flex-1 bg-amber-500 hover:bg-amber-600 text-white font-bold py-2.5 rounded-xl text-sm cursor-pointer shadow-sm disabled:opacity-60"
+              >
+                Tambah Poin
+              </button>
+            </div>
           </div>
         </div>
       )}

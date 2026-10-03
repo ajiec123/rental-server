@@ -725,8 +725,8 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
             <label className="block font-label-ts text-xs text-slate-600 uppercase mb-1.5 font-bold">
               Metode Pembayaran {isMainBebas ? '(Pasca Bayar)' : ''}
             </label>
-            <div className="grid grid-cols-3 gap-2">
-              {(['QRIS', 'Cash', 'Debit'] as PaymentMethod[]).map((pm) => (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {(['QRIS', 'Cash', 'Debit', 'E-Wallet'] as PaymentMethod[]).map((pm) => (
                 <button
                   type="button"
                   key={pm}
@@ -741,7 +741,7 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
                   }`}
                 >
                   <span className="material-symbols-outlined text-sm">
-                    {pm === 'QRIS' ? 'qr_code' : pm === 'Cash' ? 'payments' : 'credit_card'}
+                    {pm === 'QRIS' ? 'qr_code' : pm === 'Cash' ? 'payments' : pm === 'Debit' ? 'credit_card' : 'account_balance_wallet'}
                   </span>
                   {pm}
                 </button>

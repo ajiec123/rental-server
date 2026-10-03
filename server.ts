@@ -1095,6 +1095,67 @@ async function startServer() {
     }
   });
 
+  // ===== Automatic daily backup =====
+  // Checks hourly; dumps the full DB state once per calendar day into
+  // data-server/backups/ (auto-rotates: keeps the newest 14 files). This is
+  // the safety net for the rental's transaction history — a POS losing its
+  // books is far worse than any feature gap.
+  const BACKUPS_DIR = path.join(DATA_DIR_PATH, 'backups');
+  const BACKUP_KEEP = 14;
+  let lastBackupDay = ''; // YYYY-MM-DD of the last successful backup
+
+  // On startup, adopt today's existing backup (if any) so a server restart
+  // doesn't trigger a second dump for the same day.
+  try {
+    const existing = await fs.readdir(BACKUPS_DIR).catch(() => [] as string[]);
+    const todays = existing.find((f) => f === `auto-backup-${new Date().toISOString().slice(0, 10)}.json`);
+    if (todays) lastBackupDay = new Date().toISOString().slice(0, 10);
+  } catch {}
+
+  function runDailyBackup() {
+    const today = new Date().toISOString().slice(0, 10);
+    if (today === lastBackupDay) return;
+    lastBackupDay = today; // set immediately — retry only next hour on failure
+    (async () => {
+      try {
+        const state = await loadAll();
+        await fs.mkdir(BACKUPS_DIR, { recursive: true });
+        const filename = `auto-backup-${today}.json`;
+        await fs.writeFile(
+          path.join(BACKUPS_DIR, filename),
+          JSON.stringify({
+            meta: { app: 'command-center', version: 1, exportedAt: new Date().toISOString(), auto: true },
+            data: {
+              stations: state.stations,
+              transactions: state.transactions,
+              vips: state.vips,
+              employees: state.employees,
+              permissions: state.permissions,
+              settings: state.settings,
+              tvPairings: state.tvPairings,
+            },
+          }, null, 2),
+          'utf-8'
+        );
+        // Rotate: delete the oldest auto-backups beyond BACKUP_KEEP
+        const files = (await fs.readdir(BACKUPS_DIR))
+          .filter((f) => f.startsWith('auto-backup-') && f.endsWith('.json'))
+          .sort();
+        while (files.length > BACKUP_KEEP) {
+          const oldest = files.shift();
+          if (oldest) await fs.unlink(path.join(BACKUPS_DIR, oldest)).catch(() => {});
+        }
+        console.log(`[auto-backup] ${filename} written (${files.length} kept)`);
+      } catch (e) {
+        console.error('[auto-backup] failed:', (e as Error).message);
+      }
+    })();
+  }
+
+  // First backup ~10s after start (let PGlite finish booting), then hourly.
+  setTimeout(runDailyBackup, 10_000);
+  setInterval(runDailyBackup, 60 * 60 * 1000);
+
   // Health check
   app.get('/api/health', (req, res) => {
     const list = Array.from(channelRegistry.entries()).map(([ch, subs]) => ({
