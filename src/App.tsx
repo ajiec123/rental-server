@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { apiFetch, clearApiCredentials } from './apiClient';
+import { LicenseActivationModal } from './components/LicenseActivationModal';
 import { useWebSocketTimer } from './hooks/useWebSocketTimer';
 import {
   TabType,
@@ -723,6 +724,28 @@ export default function App() {
     mealAllowancePerDay: 10000,
     storeName: 'COMMAND CENTER',
   });
+
+  // ===== Commercial license state =====
+  // Saat lisensi invalid (belum aktif / kedaluwarsa), operator app ditahan
+  // di layar aktivasi. Server tetap jalan (TV demo mode) tapi sewa ditolak.
+  const [license, setLicense] = useState<{
+    valid: boolean;
+    reason: string;
+    licensee: string | null;
+    maxStations: number | null;
+  } | null>(null);
+
+  const refreshLicense = () => {
+    fetch('/api/license')
+      .then((r) => r.json())
+      .then((d) => setLicense(d))
+      .catch((e) => console.warn('[license] status check failed:', e));
+  };
+
+  // Cek lisensi saat mount dan setiap kali operator login (setelah auth gate).
+  useEffect(() => {
+    refreshLicense();
+  }, []);
 
   // Fetch settings sekali saat mount (persist di server DB).
   useEffect(() => {
@@ -2106,6 +2129,12 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
       {!isAuthenticated && (
         <div className="fixed inset-0 z-50 bg-slate-900"></div>
       )}
+      {/* License Gate: operator sudah login tapi lisensi server invalid →
+          seluruh UI utama ditahan, hanya modal aktivasi yang bisa diakses.
+          TV tetap jalan (demo mode) di sisi server. */}
+      {isAuthenticated && license && !license.valid && (
+        <div className="fixed inset-0 z-[55] bg-slate-900"></div>
+      )}
       {/* Top Header */}
       <Header
         activeTab={activeTab}
@@ -2404,6 +2433,25 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
               triggerActionToast(`❌ Gagal simpan pairing: ${(e as Error).message}`, 'warning');
             });
         }}
+      />
+
+      <LicenseActivationModal
+        isOpen={isAuthenticated && !!license && !license.valid}
+        reason={license?.reason}
+        licensee={license?.licensee}
+        onActivated={(info) => {
+          setLicense({
+            valid: true,
+            reason: 'Lisensi aktif',
+            licensee: info.licensee,
+            maxStations: info.maxStations,
+          });
+          triggerActionToast(
+            `✅ Lisensi aktif — ${info.licensee ?? ''}${info.maxStations ? ` (maks ${info.maxStations} station)` : ''}`,
+            'success'
+          );
+        }}
+        onLogout={handleLogout}
       />
 
       <LoginModal

@@ -757,17 +757,20 @@ async function startServer() {
 
   // Activate: accepts the raw license key, verifies signature + expiry, and
   // installs it into the data dir. Does NOT require auth (it IS the first
-  // auth step on a fresh install).
+  // auth step on a fresh install). The server-side license state is only
+  // updated on a VALID activation — a failed attempt must never clear an
+  // existing working license.
   app.post('/api/license/activate', asyncRoute(async (req, res) => {
     const { key } = req.body || {};
     if (typeof key !== 'string' || !key.trim()) {
       return res.status(400).json({ error: 'License key required' });
     }
-    const result = writeInstalledLicense(DATA_DIR_PATH, key);
-    licenseState = result;
+    const result = verifyLicenseKey(key);
     if (!result.valid) {
       return res.status(400).json({ error: result.reason, license: licenseSummary() });
     }
+    writeInstalledLicense(DATA_DIR_PATH, key); // persist only valid keys
+    licenseState = result;
     console.log(`[license] activated for "${result.payload?.licensee}" (max ${result.payload?.maxStations} stations)`);
     res.json({ ok: true, license: licenseSummary() });
   }));
