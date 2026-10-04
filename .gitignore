@@ -46,3 +46,5 @@ data-server/branding.json
 # Kunci privat TIDAK BOLEH masuk repo — hanya di PC vendor.
 license-keys/
 command-center-license.key
+
+data-server/license.key
