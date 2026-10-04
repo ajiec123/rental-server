@@ -42,6 +42,7 @@ import {
   DBSettings,
   DBTvPairing,
 } from './server-db';
+import { readInstalledLicense, writeInstalledLicense, verifyLicenseKey } from './license';
 
 // ===== TV Control Adapter Registry =====
 // Adapter functions translate abstract TV commands into hardware-specific
@@ -165,6 +166,21 @@ let employees: DBEmployee[] = dbState.employees;
 let userPermissions: DBUserPermission[] = dbState.permissions;
 let settings: DBSettings = dbState.settings;
 let tvPairings: DBTvPairing[] = dbState.tvPairings || [];
+
+// ===== Commercial license state =====
+// Validated at boot and on activation. When invalid, the server keeps running
+// (TV screensaver / demo mode works) but the operator app is held on the
+// activation screen and session-start endpoints refuse to operate.
+let licenseState = readInstalledLicense(DATA_DIR_PATH);
+function licenseSummary() {
+  return {
+    valid: licenseState.valid,
+    reason: licenseState.reason,
+    licensee: licenseState.payload?.licensee ?? null,
+    maxStations: licenseState.payload?.maxStations ?? null,
+    expiresAt: licenseState.payload?.expiresAt ?? null,
+  };
+}
 
 // ===== Seed initial mock data ONLY on first ever boot =====
 // Uses a settings-key flag so seed runs once. After that, an empty DB stays
@@ -436,6 +452,27 @@ async function startServer() {
 
   // REST API: start session (fallback for WS)
   app.post('/api/sessions/start', authGuard, (req, res) => {
+    // License gate: without a valid license the operator app cannot start
+    // sessions (the TV keeps running in demo/screensaver mode).
+    if (!licenseState.valid) {
+      return res.status(402).json({
+        error: 'Lisensi tidak aktif — aktivasi lisensi terlebih dahulu',
+        license: licenseSummary(),
+      });
+    }
+    // Enforce the licensed station cap.
+    const maxStations = licenseState.payload?.maxStations ?? 0;
+    const licensedStationIds = new Set(
+      (licenseState.payload as any)?.stationIds ?? []
+    );
+    void licensedStationIds;
+    const activeCount = stations.length;
+    if (maxStations > 0 && activeCount > maxStations) {
+      return res.status(402).json({
+        error: `Lisensi mencakup maksimal ${maxStations} station (terpasang ${activeCount})`,
+        license: licenseSummary(),
+      });
+    }
     const { stationId, session, transaction } = req.body || {};
     if (!stationId || !session || !transaction) {
       return res.status(400).json({ error: 'stationId, session, and transaction are required' });
@@ -712,6 +749,28 @@ async function startServer() {
     }
     res.json({ ok: true });
   });
+
+  // ===== Commercial license =====
+  app.get('/api/license', (req, res) => {
+    res.json(licenseSummary());
+  });
+
+  // Activate: accepts the raw license key, verifies signature + expiry, and
+  // installs it into the data dir. Does NOT require auth (it IS the first
+  // auth step on a fresh install).
+  app.post('/api/license/activate', asyncRoute(async (req, res) => {
+    const { key } = req.body || {};
+    if (typeof key !== 'string' || !key.trim()) {
+      return res.status(400).json({ error: 'License key required' });
+    }
+    const result = writeInstalledLicense(DATA_DIR_PATH, key);
+    licenseState = result;
+    if (!result.valid) {
+      return res.status(400).json({ error: result.reason, license: licenseSummary() });
+    }
+    console.log(`[license] activated for "${result.payload?.licensee}" (max ${result.payload?.maxStations} stations)`);
+    res.json({ ok: true, license: licenseSummary() });
+  }));
 
   /**
    * Guard: require a valid Bearer token. Attach with

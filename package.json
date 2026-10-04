@@ -12,6 +12,7 @@
     "db:info": "tsx db-cli.ts info",
     "db:export": "tsx db-cli.ts export",
     "db:import": "tsx db-cli.ts import",
+    "license:generate": "tsx license-vendor.ts",
     "db:fresh": "tsx db-cli.ts fresh",
     "db:reset": "tsx db-cli.ts reset"
   },

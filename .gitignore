@@ -41,3 +41,8 @@ android-tv-receiver/.gradle/
 # branding.json berisi base64 wallpaper (bisa ber-MB) — data runtime yang
 # di-upload lewat operator app, bukan source code.
 data-server/branding.json
+
+# ===== License keys (commercial) =====
+# Kunci privat TIDAK BOLEH masuk repo — hanya di PC vendor.
+license-keys/
+command-center-license.key
