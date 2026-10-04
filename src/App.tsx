@@ -734,11 +734,15 @@ export default function App() {
     licensee: string | null;
     maxStations: number | null;
   } | null>(null);
+  const [licenseMachineId, setLicenseMachineId] = useState<string | null>(null);
 
   const refreshLicense = () => {
     fetch('/api/license')
       .then((r) => r.json())
-      .then((d) => setLicense(d))
+      .then((d) => {
+        setLicense(d);
+        setLicenseMachineId(d.machineId ?? null);
+      })
       .catch((e) => console.warn('[license] status check failed:', e));
   };
 
@@ -2439,6 +2443,7 @@ const handleTvControl = useCallback((stationId: string, command: string) => {
         isOpen={isAuthenticated && !!license && !license.valid}
         reason={license?.reason}
         licensee={license?.licensee}
+        machineId={licenseMachineId}
         onActivated={(info) => {
           setLicense({
             valid: true,

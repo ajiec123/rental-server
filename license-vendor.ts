@@ -21,9 +21,17 @@ function arg(name: string): string | undefined {
 const licensee = arg('--licensee');
 const stations = Number(arg('--stations') ?? 12);
 const days = arg('--days') ? Number(arg('--days')) : null;
+// Device binding: --machine-id "abc123" atau beberapa dipisah koma.
+// Kosong = key berlaku di perangkat mana pun (tidak direkomendasikan untuk
+// komersial). Machine ID didapat dari layar aktivasi customer.
+const machineIdsRaw = arg('--machine-id');
+const machineIds = machineIdsRaw
+  ? machineIdsRaw.split(',').map((s) => s.trim()).filter(Boolean)
+  : [];
 
 if (!licensee || isNaN(stations) || stations <= 0) {
-  console.error('Usage: npm run license:generate -- --licensee "Nama Rental" --stations 12 [--days 365]');
+  console.error('Usage: npm run license:generate -- --licensee "Nama Rental" --stations 12 [--days 365] [--machine-id id1,id2]');
+  console.error('Get the customer machine-id from their activation screen / GET /api/license/device.');
   process.exit(1);
 }
 
@@ -39,6 +47,7 @@ const payload = {
   maxStations: stations,
   expiresAt: days ? Date.now() + days * 24 * 60 * 60 * 1000 : null,
   issuedAt: Date.now(),
+  ...(machineIds.length > 0 ? { machineIds } : {}),
 };
 
 const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
@@ -51,6 +60,7 @@ console.log('='.repeat(60));
 console.log(`Licensee     : ${licensee}`);
 console.log(`Max stations : ${stations}`);
 console.log(`Expires      : ${payload.expiresAt ? new Date(payload.expiresAt!).toISOString().slice(0, 10) : 'perpetual'}`);
+console.log(`Device bind  : ${machineIds.length > 0 ? machineIds.join(', ') : 'TIDAK (key bebas)'}`);
 console.log('='.repeat(60));
 console.log(key);
 console.log('='.repeat(60));

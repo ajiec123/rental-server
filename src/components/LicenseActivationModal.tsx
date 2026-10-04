@@ -10,12 +10,14 @@ export const LicenseActivationModal: React.FC<{
   isOpen: boolean;
   reason?: string;
   licensee?: string | null;
+  machineId?: string;
   onActivated: (info: { licensee: string | null; maxStations: number | null }) => void;
   onLogout: () => void;
-}> = ({ isOpen, reason, licensee, onActivated, onLogout }) => {
+}> = ({ isOpen, reason, licensee, machineId, onActivated, onLogout }) => {
   const [key, setKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const handleActivate = async () => {
     if (!key.trim() || busy) return;
@@ -92,6 +94,32 @@ export const LicenseActivationModal: React.FC<{
               Key berformat CC1.xxx.yyy — diberikan oleh vendor lisensi Command Center.
             </p>
           </div>
+
+          {/* Machine ID — customer kirim ini ke vendor agar key di-bind ke device */}
+          {machineId && (
+            <div className="bg-slate-100 border border-slate-200 rounded-xl p-3">
+              <div className="flex justify-between items-center">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">
+                  Machine ID (kirim ke vendor)
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(machineId);
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2000);
+                  }}
+                  className="text-[10px] font-bold text-cyan-700 hover:text-cyan-900 cursor-pointer flex items-center gap-1"
+                >
+                  <span className="material-symbols-outlined text-sm">{copied ? 'check' : 'content_copy'}</span>
+                  {copied ? 'Tersalin' : 'Salin'}
+                </button>
+              </div>
+              <div className="text-[11px] font-mono-code font-bold text-slate-700 mt-1 break-all select-all">
+                {machineId}
+              </div>
+            </div>
+          )}
 
           {error && (
             <div className="bg-rose-50 border border-rose-200 rounded-xl px-3 py-2.5 text-xs font-bold text-rose-800 flex items-center gap-2">

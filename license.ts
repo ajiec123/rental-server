@@ -1,16 +1,23 @@
 /**
- * License validation (Ed25519-signed keys, offline verification).
+ * License validation (Ed25519-signed keys, offline verification, DEVICE BINDING).
  *
  * Key format:  CC1.<base64url payload>.<base64url signature>
- * Payload:     JSON { licensee, maxStations, expiresAt (ms | null), issuedAt }
+ * Payload:     JSON { licensee, maxStations, expiresAt, issuedAt, machineIds? }
+ *   machineIds: array of device fingerprints allowed to run this license.
+ *   - Empty array / missing  → key is device-agnostic (works anywhere).
+ *   - Non-empty              → this install's fingerprint MUST be in the list.
  *
  * The PUBLIC key is embedded here; the PRIVATE key (license-keys/private.pem)
  * never leaves the vendor machine. Signature verification is pure Node crypto,
  * so it works fully offline.
+ *
+ * Device fingerprint: Windows MachineGuid (HKLM\SOFTWARE\Microsoft\Cryptography)
+ * hashed with SHA-256 — stable across reboots, changes only on OS reinstall.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { execSync } from 'node:child_process';
 
 // Embedded public key — generated once by the vendor (license-keys/public.pem).
 const LICENSE_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
@@ -23,12 +30,38 @@ export interface LicensePayload {
   /** Unix ms when the license expires; null = perpetual. */
   expiresAt: number | null;
   issuedAt: number;
+  /** Device fingerprints (SHA-256 of MachineGuid) allowed to run this key. */
+  machineIds?: string[];
 }
 
 export interface LicenseCheckResult {
   valid: boolean;
   reason: string;
   payload: LicensePayload | null;
+}
+
+let cachedMachineId: string | null = null;
+
+/**
+ * Device fingerprint: SHA-256 hex of the Windows MachineGuid.
+ * Cached after first read. Falls back to hostname hash if the registry is
+ * unavailable (non-Windows dev machine).
+ */
+export function getMachineId(): string {
+  if (cachedMachineId) return cachedMachineId;
+  let raw = '';
+  try {
+    raw = execSync(
+      'reg query "HKLM\\SOFTWARE\\Microsoft\\Cryptography" /v MachineGuid',
+      { encoding: 'utf-8', timeout: 5000 }
+    );
+    const m = raw.match(/MachineGuid\s+REG_SZ\s+(\S+)/);
+    if (m) raw = m[1];
+  } catch {
+    raw = `fallback:${process.env.COMPUTERNAME ?? 'unknown-host'}`;
+  }
+  cachedMachineId = crypto.createHash('sha256').update(raw.trim()).digest('hex');
+  return cachedMachineId;
 }
 
 function b64urlToJson(b64url: string): LicensePayload | null {
@@ -69,6 +102,20 @@ export function verifyLicenseKey(key: string): LicenseCheckResult {
   if (payload.expiresAt !== null && Date.now() > payload.expiresAt) {
     return { valid: false, reason: 'Lisensi sudah kedaluwarsa', payload };
   }
+
+  // ===== Device binding =====
+  const allowed = payload.machineIds ?? [];
+  if (allowed.length > 0) {
+    const myId = getMachineId();
+    if (!allowed.includes(myId)) {
+      return {
+        valid: false,
+        reason: 'Lisensi tidak terikat ke perangkat ini — hubungi vendor untuk migrasi',
+        payload,
+      };
+    }
+  }
+
   return { valid: true, reason: 'Lisensi aktif', payload };
 }
 

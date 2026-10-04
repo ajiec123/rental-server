@@ -42,7 +42,12 @@ import {
   DBSettings,
   DBTvPairing,
 } from './server-db';
-import { readInstalledLicense, writeInstalledLicense, verifyLicenseKey } from './license';
+import {
+  readInstalledLicense,
+  writeInstalledLicense,
+  verifyLicenseKey,
+  getMachineId,
+} from './license';
 
 // ===== TV Control Adapter Registry =====
 // Adapter functions translate abstract TV commands into hardware-specific
@@ -752,14 +757,19 @@ async function startServer() {
 
   // ===== Commercial license =====
   app.get('/api/license', (req, res) => {
-    res.json(licenseSummary());
+    res.json({
+      ...licenseSummary(),
+      // Device fingerprint of THIS install — customer reports this to the
+      // vendor so the key can be bound to their machine.
+      machineId: getMachineId(),
+    });
   });
 
-  // Activate: accepts the raw license key, verifies signature + expiry, and
-  // installs it into the data dir. Does NOT require auth (it IS the first
-  // auth step on a fresh install). The server-side license state is only
-  // updated on a VALID activation — a failed attempt must never clear an
-  // existing working license.
+  // Activate: accepts the raw license key, verifies signature + expiry +
+  // device binding, and installs it into the data dir. Does NOT require auth
+  // (it IS the first auth step on a fresh install). The server-side license
+  // state is only updated on a VALID activation — a failed attempt must never
+  // clear an existing working license.
   app.post('/api/license/activate', asyncRoute(async (req, res) => {
     const { key } = req.body || {};
     if (typeof key !== 'string' || !key.trim()) {
@@ -774,6 +784,12 @@ async function startServer() {
     console.log(`[license] activated for "${result.payload?.licensee}" (max ${result.payload?.maxStations} stations)`);
     res.json({ ok: true, license: licenseSummary() });
   }));
+
+  // Device fingerprint of this install — customer sends this to the vendor
+  // when requesting a license so the key can be bound to their machine.
+  app.get('/api/license/device', (req, res) => {
+    res.json({ machineId: getMachineId(), hostname: process.env.COMPUTERNAME ?? '' });
+  });
 
   /**
    * Guard: require a valid Bearer token. Attach with
